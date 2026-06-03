@@ -640,7 +640,7 @@ class AutomationSupervisor:
                 )
                 return final_df
 
-            except (ExtractionError, StateMachineError, asyncio.TimeoutError) as exc:
+            except Exception as exc:
                 last_exception = exc
                 logger.warning(
                     "[SUPERVISOR] Attempt %d/%d failed for month %02d: %s",
@@ -661,17 +661,8 @@ class AutomationSupervisor:
                     # asyncio.sleep yields control to the event loop while
                     # waiting — does NOT block other jobs or coroutines.
                     await asyncio.sleep(backoff)
-
-            except Exception as exc:
-                # Unexpected exception (e.g. Playwright segfault propagated
-                # through the async boundary) — do not swallow.
-                last_exception = exc
-                logger.error(
-                    "[SUPERVISOR] Unexpected exception on month %02d attempt %d: %s\n%s",
-                    month, attempt, exc, traceback.format_exc(),
-                )
-                task_state.current_workflow_state = WorkflowState.FAILED
-                break
+                else:
+                    task_state.current_workflow_state = WorkflowState.FAILED
 
         # All retries exhausted.
         raise ExtractionError(
