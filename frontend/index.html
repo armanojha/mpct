@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MPCT-AP · Treasury Extraction Portal</title>
+
+  <!-- React + Babel via CDN (no build step required) -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:           #0f1117;
+      --surface:      #1a1d27;
+      --surface2:     #22263a;
+      --border:       #2e3350;
+      --accent:       #4f6ef7;
+      --accent-hover: #3b57e8;
+      --accent-dim:   rgba(79,110,247,0.15);
+      --success:      #22c55e;
+      --warn:         #f59e0b;
+      --error:        #ef4444;
+      --text:         #e2e8f0;
+      --text-muted:   #64748b;
+      --text-dim:     #94a3b8;
+      --radius:       10px;
+      --font:         'Inter', system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 16px 64px;
+    }
+
+    /* ── Layout ───────────────────────────────────────────────────── */
+    .shell {
+      width: 100%;
+      max-width: 720px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────── */
+    .header {
+      text-align: center;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text);
+    }
+    .header h1 span { color: var(--accent); }
+    .header p {
+      margin-top: 6px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+
+    /* ── Card ─────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .card-title {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: -8px;
+    }
+
+    /* ── Form Row ─────────────────────────────────────────────────── */
+    .row { display: flex; gap: 16px; }
+    .row .field { flex: 1; }
+
+    /* ── Field ────────────────────────────────────────────────────── */
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .field label {
+      font-size: 0.78rem;
+      font-weight: 500;
+      color: var(--text-dim);
+      letter-spacing: 0.02em;
+    }
+    .field input,
+    .field select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: var(--font);
+      font-size: 0.9rem;
+      padding: 9px 12px;
+      width: 100%;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      outline: none;
+    }
+    .field input:focus,
+    .field select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-dim);
+    }
+    .field input::placeholder { color: var(--text-muted); }
+    .field select option { background: var(--surface2); }
+
+    /* ── Month Grid ───────────────────────────────────────────────── */
+    .month-section { display: flex; flex-direction: column; gap: 12px; }
+
+    .quick-btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .btn-quick {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 0.78rem;
+      font-weight: 500;
+      padding: 5px 12px;
+      transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .btn-quick:hover {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+    .btn-quick.active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .month-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 8px;
+    }
+    .month-cell {
+      aspect-ratio: 1.6;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s;
+      user-select: none;
+      gap: 2px;
+    }
+    .month-cell:hover { border-color: var(--accent); }
+    .month-cell.selected {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+    }
+    .month-cell .m-num {
+      font-size: 0.7rem;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+    .month-cell.selected .m-num { color: var(--accent); }
+    .month-cell .m-name {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-dim);
+    }
+    .month-cell.selected .m-name { color: var(--accent); }
+
+    .month-hint {
+      font-size: 0.76rem;
+      color: var(--text-muted);
+    }
+    .month-hint span { color: var(--accent); font-weight: 600; }
+
+    /* ── Submit Button ────────────────────────────────────────────── */
+    .btn-submit {
+      background: var(--accent);
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 0.95rem;
+      font-weight: 600;
+      padding: 13px 24px;
+      text-align: center;
+      transition: background 0.15s, opacity 0.15s;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      letter-spacing: 0.01em;
+    }
+    .btn-submit:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn-submit:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* Spinner */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      width: 18px; height: 18px;
+      border: 2px solid rgba(255,255,255,0.25);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+
+    /* ── Status Banner ────────────────────────────────────────────── */
+    .banner {
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 0.875rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      line-height: 1.5;
+    }
+    .banner.error   { background: rgba(239,68,68,0.1);  border: 1px solid rgba(239,68,68,0.35);  color: #fca5a5; }
+    .banner.warn    { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.35); color: #fcd34d; }
+    .banner.success { background: rgba(34,197,94,0.1);  border: 1px solid rgba(34,197,94,0.35);  color: #86efac; }
+    .banner.info    { background: rgba(79,110,247,0.1); border: 1px solid rgba(79,110,247,0.35); color: #a5b4fc; }
+
+    .banner-icon { font-size: 1.05rem; flex-shrink: 0; margin-top: 1px; }
+    .banner-body { flex: 1; }
+    .banner-title { font-weight: 700; display: block; margin-bottom: 2px; }
+    .banner-sub   { color: inherit; opacity: 0.8; font-size: 0.82rem; }
+
+    /* ── Progress Bar ─────────────────────────────────────────────── */
+    .progress-wrap {
+      background: var(--surface2);
+      border-radius: 4px;
+      height: 4px;
+      overflow: hidden;
+    }
+    @keyframes indeterminate {
+      0%   { transform: translateX(-100%); }
+      100% { transform: translateX(400%); }
+    }
+    .progress-bar {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 4px;
+      animation: indeterminate 1.4s ease-in-out infinite;
+      width: 25%;
+    }
+
+    /* ── Footer ───────────────────────────────────────────────────── */
+    .footer {
+      font-size: 0.73rem;
+      color: var(--text-muted);
+      text-align: center;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .footer code {
+      background: var(--surface2);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 0.7rem;
+      color: var(--accent);
+    }
+
+    @media (max-width: 480px) {
+      .row { flex-direction: column; }
+      .month-grid { grid-template-columns: repeat(4, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useCallback } = React;
+
+    /* ── Constants ─────────────────────────────────────────────────── */
+    const API_ENDPOINT = "http://127.0.0.1:8000/api/v1/extract";
+
+    // Indian fiscal calendar: month 1 = April, month 12 = March
+    const MONTH_META = [
+      { n: 1,  label: "Apr" }, { n: 2,  label: "May" },
+      { n: 3,  label: "Jun" }, { n: 4,  label: "Jul" },
+      { n: 5,  label: "Aug" }, { n: 6,  label: "Sep" },
+      { n: 7,  label: "Oct" }, { n: 8,  label: "Nov" },
+      { n: 9,  label: "Dec" }, { n: 10, label: "Jan" },
+      { n: 11, label: "Feb" }, { n: 12, label: "Mar" },
+    ];
+
+    const QUICK_SELECT = [
+      { label: "Q1 (Apr–Jun)",  months: [1, 2, 3]  },
+      { label: "Q2 (Jul–Sep)",  months: [4, 5, 6]  },
+      { label: "Q3 (Oct–Dec)",  months: [7, 8, 9]  },
+      { label: "Q4 (Jan–Mar)",  months: [10, 11, 12] },
+      { label: "Select All",    months: [1,2,3,4,5,6,7,8,9,10,11,12] },
+    ];
+
+    // Build fiscal year options: current year ± 5
+    const CUR_YEAR = new Date().getFullYear();
+    const YEARS = Array.from({ length: 11 }, (_, i) => CUR_YEAR - 5 + i);
+
+    /* ── Status helpers ────────────────────────────────────────────── */
+    const STATUS = {
+      IDLE:       "idle",
+      LOADING:    "loading",
+      SUCCESS:    "success",
+      ERR_429:    "err_429",
+      ERR_503:    "err_503",
+      ERR_GENERIC:"err_generic",
+    };
+
+    const STATUS_META = {
+      [STATUS.SUCCESS]:     { type: "success", icon: "✓", title: "Extraction complete",      sub: "Your Excel file has been downloaded." },
+      [STATUS.ERR_429]:     { type: "warn",    icon: "⏳", title: "Queue full — retry shortly", sub: "The extraction queue is at capacity. Please wait a few seconds and submit again." },
+      [STATUS.ERR_503]:     { type: "error",   icon: "⚠", title: "Service unavailable",      sub: "The automation engine is currently unhealthy (circuit breaker open). Our team has been notified. Please retry later." },
+      [STATUS.ERR_GENERIC]: { type: "error",   icon: "✕", title: "Request failed",           sub: "" },
+    };
+
+    /* ── Download helper ───────────────────────────────────────────── */
+    async function downloadBlob(response, filename) {
+      const blob = await response.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    /* ── Root App ──────────────────────────────────────────────────── */
+    function App() {
+      const [ifsc,          setIfsc]          = useState("");
+      const [accountNumber, setAccountNumber] = useState("");
+      const [year,          setYear]          = useState(CUR_YEAR);
+      const [months,        setMonths]        = useState([]);
+      const [status,        setStatus]        = useState(STATUS.IDLE);
+      const [errorDetail,   setErrorDetail]   = useState("");
+      const [activeQuick,   setActiveQuick]   = useState(null);
+
+      /* Month toggling */
+      const toggleMonth = useCallback((n) => {
+        setActiveQuick(null);
+        setMonths(prev =>
+          prev.includes(n) ? prev.filter(m => m !== n) : [...prev, n].sort((a,b)=>a-b)
+        );
+      }, []);
+
+      const applyQuick = useCallback((qs) => {
+        setActiveQuick(qs.label);
+        setMonths([...qs.months]);
+      }, []);
+
+      /* Derived quick-select active state */
+      const isQuickActive = (qs) => activeQuick === qs.label;
+
+      /* Form submit */
+      const handleSubmit = useCallback(async () => {
+        if (!ifsc.trim() || !accountNumber.trim() || months.length === 0) return;
+
+        setStatus(STATUS.LOADING);
+        setErrorDetail("");
+
+        // Derive filename from inputs (backend also sends Content-Disposition,
+        // but we prepare a fallback here).
+        const safeIfsc = ifsc.trim().toUpperCase();
+        const filename = `treasury_${safeIfsc}_${year}.xlsx`;
+
+        // Build the idempotency key (client-side HMAC would require the secret;
+        // with ENABLE_HMAC_VALIDATION=false in dev the header is still required
+        // by the schema but not verified — we send a placeholder).
+        // In production, replace this with a proper HMAC call or a backend-issued token.
+        const idempotencyKey = `dev-placeholder-${Date.now()}`;
+
+        try {
+          const response = await fetch(API_ENDPOINT, {
+            method:  "POST",
+            headers: {
+              "Content-Type":      "application/json",
+              "X-Idempotency-Key": idempotencyKey,
+            },
+            body: JSON.stringify({
+              ifsc_code:      safeIfsc,
+              account_number: accountNumber.trim(),
+              year:           parseInt(year, 10),
+              months:         months,
+            }),
+          });
+
+          if (response.ok) {
+            // ── StreamingResponse → trigger download ──────────────────
+            // The browser receives a binary blob (the .xlsx stream).
+            // We create an ephemeral <a> tag, set its href to an object URL,
+            // and programmatically click it to invoke the Save dialog.
+            const contentDisposition = response.headers.get("Content-Disposition") || "";
+            const serverFilename = contentDisposition.match(/filename="([^"]+)"/)?.[1];
+            await downloadBlob(response, serverFilename || filename);
+            setStatus(STATUS.SUCCESS);
+            return;
+          }
+
+          // ── HTTP error handling ────────────────────────────────────
+          if (response.status === 429) {
+            setStatus(STATUS.ERR_429);
+            return;
+          }
+          if (response.status === 503) {
+            setStatus(STATUS.ERR_503);
+            return;
+          }
+
+          // Other errors (422, 401, 500 …)
+          let detail = `HTTP ${response.status}`;
+          try {
+            const body = await response.json();
+            detail = body?.detail || detail;
+          } catch (_) { /* body may not be JSON */ }
+          setErrorDetail(detail);
+          setStatus(STATUS.ERR_GENERIC);
+
+        } catch (err) {
+          // Network-level failure (CORS block, server down, etc.)
+          setErrorDetail(err.message || "Network error — is the backend running?");
+          setStatus(STATUS.ERR_GENERIC);
+        }
+      }, [ifsc, accountNumber, year, months]);
+
+      const isReady = ifsc.trim() && accountNumber.trim() && months.length > 0;
+      const isLoading = status === STATUS.LOADING;
+
+      return (
+        <div className="shell">
+          {/* ── Header ──────────────────────────────────────────── */}
+          <div className="header">
+            <h1>MP Cyber Treasury <span>Automated Pipeline</span></h1>
+            <p>algoRoute · MPCT-AP Extraction Portal · Phase 5</p>
+          </div>
+
+          {/* ── Bank Details ─────────────────────────────────────── */}
+          <div className="card">
+            <span className="card-title">Bank Details</span>
+            <div className="row">
+              <div className="field">
+                <label>IFSC Code</label>
+                <input
+                  type="text"
+                  placeholder="e.g. SBIN0001234"
+                  value={ifsc}
+                  onChange={e => setIfsc(e.target.value.toUpperCase())}
+                  maxLength={11}
+                  disabled={isLoading}
+                  spellCheck={false}
+                />
+              </div>
+              <div className="field">
+                <label>Account Number</label>
+                <input
+                  type="text"
+                  placeholder="9–18 digit account number"
+                  value={accountNumber}
+                  onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ""))}
+                  maxLength={18}
+                  disabled={isLoading}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* ── Period Selection ─────────────────────────────────── */}
+          <div className="card">
+            <span className="card-title">Extraction Period</span>
+
+            {/* Fiscal Year */}
+            <div className="field">
+              <label>Financial Year</label>
+              <select
+                value={year}
+                onChange={e => setYear(e.target.value)}
+                disabled={isLoading}
+              >
+                {YEARS.map(y => (
+                  <option key={y} value={y}>{y} – {y + 1}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Month Selection */}
+            <div className="month-section">
+              <label className="field" style={{fontSize:"0.78rem",fontWeight:500,color:"var(--text-dim)"}}>
+                Month Selection
+              </label>
+
+              {/* Quick Select Buttons */}
+              <div className="quick-btns">
+                {QUICK_SELECT.map(qs => (
+                  <button
+                    key={qs.label}
+                    className={`btn-quick${isQuickActive(qs) ? " active" : ""}`}
+                    onClick={() => applyQuick(qs)}
+                    disabled={isLoading}
+                  >
+                    {qs.label}
+                  </button>
+                ))}
+                {months.length > 0 && (
+                  <button
+                    className="btn-quick"
+                    onClick={() => { setMonths([]); setActiveQuick(null); }}
+                    disabled={isLoading}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {/* Month Grid */}
+              <div className="month-grid">
+                {MONTH_META.map(({ n, label }) => (
+                  <div
+                    key={n}
+                    className={`month-cell${months.includes(n) ? " selected" : ""}`}
+                    onClick={() => !isLoading && toggleMonth(n)}
+                  >
+                    <span className="m-num">{n}</span>
+                    <span className="m-name">{label}</span>
+                  </div>
+                ))}
+              </div>
+
+              <p className="month-hint">
+                {months.length === 0
+                  ? "Select at least one month to proceed."
+                  : <><span>{months.length}</span> month{months.length > 1 ? "s" : ""} selected — {months.map(m => MONTH_META[m-1].label).join(", ")}</>
+                }
+              </p>
+            </div>
+          </div>
+
+          {/* ── Loading Progress ─────────────────────────────────── */}
+          {isLoading && (
+            <div className="card" style={{gap:12}}>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <div className="spinner" />
+                <span style={{fontSize:"0.875rem",color:"var(--text-dim)"}}>
+                  Extraction in progress — this may take several minutes for large date ranges…
+                </span>
+              </div>
+              <div className="progress-wrap">
+                <div className="progress-bar" />
+              </div>
+            </div>
+          )}
+
+          {/* ── Status Banners ───────────────────────────────────── */}
+          {!isLoading && status !== STATUS.IDLE && STATUS_META[status] && (() => {
+            const { type, icon, title, sub } = STATUS_META[status];
+            const detail = status === STATUS.ERR_GENERIC ? errorDetail : sub;
+            return (
+              <div className={`banner ${type}`}>
+                <span className="banner-icon">{icon}</span>
+                <div className="banner-body">
+                  <span className="banner-title">{title}</span>
+                  {detail && <span className="banner-sub">{detail}</span>}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Submit ──────────────────────────────────────────── */}
+          <button
+            className="btn-submit"
+            onClick={handleSubmit}
+            disabled={!isReady || isLoading}
+          >
+            {isLoading
+              ? <><div className="spinner" /> Extracting…</>
+              : "⬇ Extract & Download Excel"
+            }
+          </button>
+
+          {/* ── Footer ──────────────────────────────────────────── */}
+          <div className="footer">
+            Posting to <code>{API_ENDPOINT}</code> · StreamingResponse → .xlsx blob download
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

@@ -223,6 +223,8 @@ async def submit_extraction(
 
     job = ExtractionJob(
         task_id       = task_id,
+        ifsc          = body.ifsc_code,
+        account_no    = body.account_number,
         year          = body.year,
         months        = body.months,
         result_future = future,
@@ -255,22 +257,57 @@ async def submit_extraction(
         )
 
     # ------------------------------------------------------------------
-    # Await the Future — this suspends the coroutine (yields control to
-    # the event loop) until the Supervisor puts the result in.
-    # asyncio.wait_for adds a safety timeout so the HTTP connection does
-    # not hang forever if the Supervisor itself gets stuck.
+    # Await the Future while also watching for client disconnects and a
+    # server-side timeout. If the browser tab closes, cancel the Future so
+    # queued work can be skipped and completed work is not retained.
     # ------------------------------------------------------------------
     try:
-        result_df: pd.DataFrame = await asyncio.wait_for(
-            future,
-            timeout=float(MAX_QUEUE_WAIT_SECONDS) + 3600.0,  # generous: queue_wait + 1 hour
+        async def _check_disconnect() -> bool:
+            while True:
+                if await request.is_disconnected():
+                    return True
+                await asyncio.sleep(2.0)
+
+        disconnect_task = asyncio.create_task(
+            _check_disconnect(), name=f"{task_id}-disconnect-watch"
         )
+        timeout_task = asyncio.create_task(
+            asyncio.sleep(float(MAX_QUEUE_WAIT_SECONDS) + 3600.0),
+            name=f"{task_id}-timeout",
+        )
+
+        done, pending = await asyncio.wait(
+            {future, disconnect_task, timeout_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        for task in pending:
+            task.cancel()
+
+        if future in done:
+            result_df: pd.DataFrame = future.result()
+        elif disconnect_task in done:
+            future.cancel()
+            logger.warning("[ENDPOINT] Client disconnected. Aborting job %s.", task_id)
+            raise HTTPException(
+                status_code=499,
+                detail="Client Closed Request",
+            )
+        elif timeout_task in done:
+            future.cancel()
+            logger.error("[ENDPOINT] Task %s timed out waiting for Supervisor result.", task_id)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Extraction timed out. Please retry.",
+            )
     except asyncio.TimeoutError:
         logger.error("[ENDPOINT] Task %s timed out waiting for Supervisor result.", task_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Extraction timed out. Please retry.",
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("[ENDPOINT] Task %s failed in Supervisor: %s", task_id, exc)
         raise HTTPException(
@@ -354,11 +391,11 @@ async def health_check(
 
 async def _excel_stream_generator(
     df: pd.DataFrame,
-    chunk_size: int = 65_536,   # 64 KB per chunk
+    chunk_size: int = 8_192,   # 8 KB per chunk
 ) -> AsyncGenerator[bytes, None]:
     """
-    Async generator that writes the DataFrame to .xlsx in memory, then
-    yields its bytes in fixed-size chunks.
+    Async generator that writes the DataFrame to .xlsx in memory on a
+    background thread, then yields its bytes in fixed-size chunks.
 
     HOW AsyncGenerator WORKS (For algoRoute)
     ──────────────────────────────────────────
@@ -377,19 +414,20 @@ async def _excel_stream_generator(
     ──────────────────────────────────────
     `df.to_excel(buffer, engine="openpyxl")` writes a real .xlsx file
     (a ZIP archive of XML files under the hood) into the BytesIO buffer.
-    `buffer.getvalue()` retrieves all the bytes of that ZIP archive.
-    We then slice them into `chunk_size` chunks with Python's slice notation:
-        data[i : i + chunk_size]
+    We seek back to the start and repeatedly read small chunks so we do
+    not create a second full-size bytes copy with `buffer.getvalue()`.
     """
-    buffer = io.BytesIO()
-    df.to_excel(buffer, index=False, engine="openpyxl")
-    data: bytes = buffer.getvalue()
-    buffer.close()
+    def _write_excel_sync() -> io.BytesIO:
+        buf = io.BytesIO()
+        df.to_excel(buf, index=False, engine="openpyxl")
+        buf.seek(0)
+        return buf
 
-    # Yield in fixed-size chunks.  range(start, stop, step) generates
-    # byte offsets: 0, 65536, 131072, … up to len(data).
-    for i in range(0, len(data), chunk_size):
-        yield data[i : i + chunk_size]
+    logger.debug("Offloading Excel generation to background thread...")
+    stream: io.BytesIO = await asyncio.to_thread(_write_excel_sync)
+
+    while chunk := stream.read(chunk_size):
+        yield chunk
         # `await asyncio.sleep(0)` yields control to the event loop between
         # chunks so other coroutines (health checks, new requests) can run.
         await asyncio.sleep(0)

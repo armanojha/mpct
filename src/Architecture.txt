@@ -1,0 +1,219 @@
+Enterprise Project Specification & Architectural Blueprint (Final V4)Project Name: MP Cyber Treasury Automated Pipeline (MPCT-AP)Classification: Enterprise Workflow Automation & Data Engineering PlatformTarget Audience: Engineering Review Board & Core DevelopersDocument Version: 4.0 (Release Candidate - Operationally Finalized)1. Executive Summary & Core PhilosophyThe MPCT-AP is a specialized data engineering platform designed to automate the extraction of financial disbursement records from the Madhya Pradesh State Treasury.This final architecture resolves the conflict between zero-persistence privacy and transactional resumability. It implements strict process isolation managed by an internal supervisor, utilizes ephemeral encrypted storage for state recovery, and employs adaptive extraction heuristics against historical baselines. It is designed to be highly resilient against both DOM drift and long-term Chromium memory degradation.2. Solution Architecture & Runtime IsolationTo protect the FastAPI gateway from the inherent instability of headless Chromium, the system uses strict process isolation. Communication is handled via Python’s native asynchronous queues and subprocess management, avoiding the overhead of external message brokers (like Kafka or RabbitMQ) while maintaining runtime decoupling.Plaintext                    ┌─────────────────────────┐
+                    │   React SPA Frontend    │
+                    └────────────┬────────────┘
+                                 │ HTTPS (HMAC Idempotency + JWT)
+                                 ▼
+                    ┌─────────────────────────┐
+                    │   FastAPI API Runtime   │
+                    │ (Gateway & Governance)  │
+                    └────────────┬────────────┘
+                                 │ (asyncio.Queue / IPC)
+  ===============================================================
+                    ┌────────────▼────────────┐
+                    │  Automation Supervisor  │
+                    │ (Health Monitor/Manager)│
+                    └────────────┬────────────┘
+                                 │ Spawns & Monitors
+                    ┌────────────▼────────────┐
+                    │ Playwright Context Pool │
+                    │ (With Crash Recovery)   │
+                    └────────────┬────────────┘
+                                 │ 
+                    ┌────────────▼────────────┐
+                    │   Pandas Transform &    │
+                    │   Data Sanitization     │
+                    └─────────────────────────┘
+Queue Timeout & Rejection SemanticsTo prevent hanging requests and provide clear operational feedback, the gateway uses precise HTTP rejection codes based on the queue state:Temporary Saturation: If the semaphore queue is full but the runtime is healthy, it returns 429 Too Many Requests.Runtime Failure: If the Automation Supervisor reports the Chromium pool as unresponsive, or the circuit breaker is open, it returns 503 Service Unavailable.The Automation SupervisorA dedicated process that sits above the Playwright runtime.Responsibilities: Restarts crashed Playwright instances, recycles the browser pool periodically to prevent memory leaks, detects hung contexts (zombies), and exposes internal health metrics back to the API runtime.3. Transactional Resumability & Ephemeral DurabilityTrue task resumability is impossible without durable intermediate state. Relying on in-memory references ("data_buffer_ref") leads to complete data loss during a crash.To achieve resumability while respecting the strict privacy (zero-persistence) requirement, the system uses Ephemeral Encrypted Checkpoints.State Machine RecoveryPythontask_state = {
+    "task_id": "req-987abc",
+    "completed_months": [1, 2, 3, 4, 5, 6, 7],
+    "current_phase": WorkflowState.EXTRACT_MONTH_8,
+    "checkpoint_path": "/tmp/sessions/req-987abc/intermediate.parquet"
+}
+Process: As each month is successfully processed, the Pandas DataFrame is serialized to a .parquet file in a temporary, session-isolated directory. The file is encrypted at rest.Recovery: If the Playwright runtime crashes on Month 8, the Supervisor restarts the engine, deserializes the Parquet file from Month 7, and resumes execution seamlessly.Cleanup: A strict TTL (Time-To-Live) policy of 15 minutes enforces the deletion of these ephemeral checkpoints.4. Adaptive Extraction Engine & Confidence ScoringThe extraction pipeline must handle both DOM structural changes and workflow drift (e.g., sudden pagination, intermediate loading screens).Workflow State Machine ValidationBefore attempting extraction, the engine asserts the workflow state, not just the URL:Pythonassert current_state == WorkflowState.EXPORT_AVAILABLE
+Confidence Scoring & Historical BaselinesFallback to the secondary binary stream is governed by a weighted confidence score.Historical Anomaly Detection: The system compares current extractions against historical baselines. If a user usually averages 120 rows per month, and a new extraction yields 3 rows, the system flags a massive anomaly, lowering the confidence score and triggering the binary download fallback, even if the DOM layout appears correct.Validation CheckWeightConditionHistorical Baseline Match0.25Row count is within expected historical standard deviation.Expected Columns Present0.25Exact match of header text array.Numeric Columns Valid0.20No strings found in 'Amount' column.Row Count Reasonable0.15Extracted count matches HTML pagination metadata.Duplicate Anomalies Absent0.15No exact repeating rows detected.Threshold: If Score < 0.90, trigger fallback.5. Security & Canonicalization ModelInput NormalizationInputs are canonicalized instantly at the API boundary to ensure idempotency hashes resolve correctly (e.g., sbin000377  becomes SBIN000377).Cryptographic IdempotencyRaw sensitive data is hashed using a server-side HMAC secret to prevent rainbow-table brute forcing:Pythonidempotency_key = hmac.new(SECRET_KEY, normalized_payload.encode(), hashlib.sha256).hexdigest()
+Payload Size GovernanceTo prevent abuse, the API enforces strict payload size limits:MAX_REQUEST_BODY_SIZE_KB = 106. Categorized Policy Engine & Feature FlagsSystem configuration is strictly segregated. Feature flags are kept entirely separate from policy constraints to allow for safe, rapid rollout control without altering core system limits.Python# core/
+├── policies/                
+│   ├── system.py      # MAX_QUEUE_WAIT_SECONDS, PORTAL_TIMEOUT
+│   ├── extraction.py  # HEURISTIC_MIN_CONFIDENCE
+│   ├── resource.py    # MAX_ACTIVE_CONTEXTS
+│   └── security.py    # RATE_LIMIT_PER_IP, MAX_PAYLOAD_SIZE
+└── feature_flags.py   # ENABLE_DOM_ENGINE, ENABLE_STREAM_ENGINE, ENABLE_PARQUET_CHECKPOINT
+7. Advanced Quality Assurance (Chaos & Soak Testing)Standard integration testing is insufficient. The testing suite focuses heavily on operational degradation.Fault Injection (Chaos Testing): Artificially kills the Chromium process mid-execution to verify the Supervisor restarts the runtime and successfully deserializes the Parquet checkpoint.Soak Testing: Runs the automation pool continuously for 12+ hours with sustained simulated user load.Heap Profiling: During Soak Testing, tools like tracemalloc and memray are attached to the automation process to pinpoint the exact source of memory accumulation, rather than simply observing that memory is increasing.8. Final Project Directory StructurePlaintextmp-treasury-pipeline/
+├── src/
+│   ├── main.py                      # Application Bootstrap & Feature Flags
+│   │
+│   ├── api/                         # API Runtime
+│   │   ├── deps.py                  # Rate-limiting, HMAC, & Queue Governance
+│   │   └── v1/endpoints.py          
+│   │
+│   ├── automation/                  # Automation Runtime (Process Isolated)
+│   │   ├── supervisor.py            # Health Monitoring & Context Recycling
+│   │   ├── state_machine.py         # Transactional Resumability (Parquet read/write)
+│   │   ├── browser_pool.py          # Chromium Lifecycle Hub
+│   │   └── engine.py                # Workflow Drift & Extraction Strategies
+│   │
+│   ├── processing/                  # ETL Pipeline
+│   │   ├── transformer.py           
+│   │   └── heuristics.py            # Confidence Scoring & Historical Baselines
+│   │
+│   ├── core/                        
+│   │   ├── policies/                # Segregated Constraints (System, Security, Resource)
+│   │   ├── feature_flags.py         # Strategy Rollout Toggles
+│   │   └── security.py              # Canonicalization Engine
+│   │
+│   └── telemetry/                   
+│       └── tracing.py               # OpenTelemetry Context Propagation
+│
+└── tests/                           
+    ├── integration/                 
+    ├── fault_injection/             # Process Kill & Context Timeout Simulations
+    └── soak_tests/                  # Long-term Memory Profiling (tracemalloc)
+
+Part 1: The Final Report (Copy this into your .txt file)
+Plaintext
+# Enterprise Project Specification & Architectural Blueprint (Final V4)
+**Project Name:** MP Cyber Treasury Automated Pipeline (MPCT-AP)
+**Classification:** Enterprise Workflow Automation & Data Engineering Platform
+**Document Version:** 4.0 (Release Candidate - Operationally Finalized)
+
+---
+
+## 1. Executive Summary & Core Philosophy
+
+The MPCT-AP is a specialized data engineering platform designed to automate the extraction of financial disbursement records from the Madhya Pradesh State Treasury.
+
+This final architecture resolves the conflict between zero-persistence privacy and transactional resumability. It implements strict process isolation managed by an internal supervisor, utilizes ephemeral encrypted storage for state recovery, and employs adaptive extraction heuristics against historical baselines. It is designed to be highly resilient against both DOM drift and long-term Chromium memory degradation.
+
+---
+
+## 2. Solution Architecture & Runtime Isolation
+
+To protect the FastAPI gateway from the inherent instability of headless Chromium, the system uses strict process isolation. Communication is handled via Python’s native asynchronous queues and subprocess management, avoiding the overhead of external message brokers (like Kafka or RabbitMQ) while maintaining runtime decoupling.
+
+### Queue Timeout & Rejection Semantics
+To prevent hanging requests and provide clear operational feedback, the gateway uses precise HTTP rejection codes based on the queue state:
+* Temporary Saturation: If the semaphore queue is full but the runtime is healthy, it returns `429 Too Many Requests`.
+* Runtime Failure: If the Automation Supervisor reports the Chromium pool as unresponsive, or the circuit breaker is open, it returns `503 Service Unavailable`.
+
+### The Automation Supervisor
+A dedicated process that sits above the Playwright runtime.
+* Responsibilities: Restarts crashed Playwright instances, recycles the browser pool periodically to prevent memory leaks, detects hung contexts (zombies), and exposes internal health metrics back to the API runtime.
+
+---
+
+## 3. Transactional Resumability & Ephemeral Durability
+
+To achieve resumability while respecting the strict privacy (zero-persistence) requirement, the system uses Ephemeral Encrypted Checkpoints.
+
+### State Machine Recovery
+* Process: As each month is successfully processed, the Pandas DataFrame is serialized to a `.parquet` file in a temporary, session-isolated directory. The file is encrypted at rest.
+* Recovery: If the Playwright runtime crashes, the Supervisor restarts the engine, deserializes the Parquet file from the last successful month, and resumes execution seamlessly.
+* Cleanup: A strict TTL (Time-To-Live) policy of 15 minutes enforces the deletion of these ephemeral checkpoints.
+
+---
+
+## 4. Adaptive Extraction Engine & Confidence Scoring
+
+The extraction pipeline must handle both DOM structural changes and workflow drift. 
+
+### Workflow State Machine Validation
+Before attempting extraction, the engine asserts the workflow state, not just the URL (e.g., `assert current_state == WorkflowState.EXPORT_AVAILABLE`).
+
+### Confidence Scoring & Historical Baselines
+Fallback to the secondary binary stream is governed by a weighted confidence score. 
+* Historical Anomaly Detection: The system compares current extractions against historical baselines. A massive anomaly (e.g., extracting 3 rows when the historical average is 120) lowers the confidence score and triggers the binary download fallback, even if the DOM layout appears correct.
+* Threshold: If the aggregate score of all validation checks (Schema match, Row count, Date parsing) drops below 0.90, the system triggers the fallback.
+
+---
+
+## 5. Security & Canonicalization Model
+
+* Input Normalization: Inputs are canonicalized instantly at the API boundary to ensure idempotency hashes resolve correctly (e.g., `sbin000377 ` becomes `SBIN000377`).
+* Cryptographic Idempotency: Raw sensitive data is hashed using a server-side HMAC secret to prevent rainbow-table brute forcing.
+* Payload Size Governance: To prevent abuse, the API enforces strict payload size limits (`MAX_REQUEST_BODY_SIZE_KB = 10`).
+
+---
+
+## 6. Categorized Policy Engine & Feature Flags
+
+System configuration is strictly segregated. Feature flags are kept entirely separate from policy constraints to allow for safe, rapid rollout control without altering core system limits.
+
+* core/policies/system.py: MAX_QUEUE_WAIT_SECONDS, PORTAL_TIMEOUT
+* core/policies/extraction.py: HEURISTIC_MIN_CONFIDENCE
+* core/policies/resource.py: MAX_ACTIVE_CONTEXTS
+* core/policies/security.py: RATE_LIMIT_PER_IP, MAX_PAYLOAD_SIZE
+* core/feature_flags.py: ENABLE_DOM_ENGINE, ENABLE_STREAM_ENGINE, ENABLE_PARQUET_CHECKPOINT
+
+---
+
+## 7. Advanced Quality Assurance (Chaos & Soak Testing)
+
+* Fault Injection (Chaos Testing): Artificially kills the Chromium process mid-execution to verify the Supervisor restarts the runtime and successfully deserializes the Parquet checkpoint.
+* Soak Testing & Heap Profiling: Runs the automation pool continuously with sustained simulated user load while attaching tools like `tracemalloc` to pinpoint the exact source of memory accumulation.
+Part 2: Phased Execution Plan
+When you pass the specification above to Claude, instruct it to build the project according to these specific phases. Do not let it write the entire system at once; have it generate the code phase by phase so we can review the architecture at each step.
+
+Phase 1: The Core Extraction Engine (Local Pipeline)
+Goal: Prove we can get the data consistently.
+
+Tasks for Claude:
+
+Write the Playwright script to navigate the MP Treasury portal.
+
+Implement the Primary Engine (DOM Extraction) and the Secondary Engine (Excel Stream Interception).
+
+Write the Pandas transformation logic to normalize the extracted rows.
+
+Review Point: We will review the CSS/XPath selectors and the Pandas DataFrame structures to ensure they are robust.
+
+Phase 2: The Service Layer & State Machine
+Goal: Wrap the raw extraction in a resilient workflow.
+
+Tasks for Claude:
+
+Implement the WorkflowState validations.
+
+Build the Confidence Scoring Heuristics engine.
+
+Implement the temporary Parquet checkpointing for transactional resumability.
+
+Review Point: We will verify the encryption of the Parquet files and the logic used to resume a failed extraction.
+
+Phase 3: IPC Isolation & The Supervisor
+Goal: Separate the fragile browser environment from the control logic.
+
+Tasks for Claude:
+
+Create the Automation Supervisor process.
+
+Implement the asyncio.Queue communication channel between the main process and the Supervisor.
+
+Build the crash-recovery loop (if Playwright dies, the Supervisor restarts it).
+
+Review Point: We will look closely at process management to ensure there are no zombie processes left hanging.
+
+Phase 4: The API Gateway & Governance
+Goal: Build the secure front door.
+
+Tasks for Claude:
+
+Set up the FastAPI application.
+
+Implement HMAC idempotency and input canonicalization.
+
+Implement the StreamingResponse for delivering the final file.
+
+Set up the categorized policies (core/policies/) and feature flags.
+
+Review Point: We will review the HTTP rejection codes (429 vs 503) and ensure the semaphore governance is properly configured.
+
+Phase 5: Deployment & Containerization
+Goal: Package the application for a stateless cloud environment.
+
+Tasks for Claude:
+
+Write the Dockerfile using the official Playwright image.
+
+Configure the container for deployment on Google Cloud Run (a great foundational step into cloud infrastructure).
+
+Review Point: We will review the Dockerfile to ensure memory limits and environment variables are set correctly for an enterprise cloud deployment.

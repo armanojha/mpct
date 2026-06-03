@@ -399,10 +399,25 @@ class AutomationSupervisor:
                 break
 
             self.health.queue_depth = self._queue.qsize()
+            if job.result_future and job.result_future.cancelled():
+                logger.warning(
+                    "[SUPERVISOR] Skipping cancelled job before execution: task_id=%s",
+                    job.task_id,
+                )
+                self._queue.task_done()
+                continue
+
             self.health.active_jobs += 1
 
             try:
                 await self._execute_job(job)
+                if job.result_future and job.result_future.cancelled():
+                    logger.warning(
+                        "[SUPERVISOR] Cancelled job ended without result: task_id=%s",
+                        job.task_id,
+                    )
+                    continue
+
                 # Reset crash counter on any success.
                 self.health.consecutive_crashes = 0
                 if self.health.circuit_state != CircuitState.CLOSED:
@@ -464,6 +479,13 @@ class AutomationSupervisor:
             start_month = get_resume_month(task_state, total_months=max(job.months))
 
             for month in job.months:
+                if job.result_future and job.result_future.cancelled():
+                    logger.warning(
+                        "[SUPERVISOR] Stopping cancelled job between months: task_id=%s",
+                        job.task_id,
+                    )
+                    return
+
                 if month < start_month:
                     # This month was already completed in a previous run.
                     logger.info(

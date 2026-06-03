@@ -126,15 +126,11 @@ app = FastAPI(
 # MIDDLEWARE
 # ──────────────────────────────────────────────────────────────────────────────
 
-# CORS — allow the React SPA to call this API from its origin.
-# In production, replace "*" with the actual frontend domain.
-_allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "*").split(",")
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins     = _allowed_origins,
+    allow_origins     = ["*"],
     allow_credentials = True,
-    allow_methods     = ["POST", "GET"],
+    allow_methods     = ["*"],
     allow_headers     = ["*"],
 )
 

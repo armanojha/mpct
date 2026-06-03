@@ -38,7 +38,7 @@ import logging
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
-from src.core.feature_flags import ENABLE_HMAC_VALIDATION, ENABLE_RATE_LIMITING
+from src.core.feature_flags import ENABLE_HMAC_VALIDATION
 from src.core.policies.security import MAX_PAYLOAD_SIZE_BYTES
 from src.core.security import CanonicalizeError, verify_idempotency_key
 
