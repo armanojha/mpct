@@ -73,10 +73,10 @@ logger = logging.getLogger(__name__)
 # Add more rows here as you discover portal label variants during testing.
 # ---------------------------------------------------------------------------
 COLUMN_RENAME_MAP: dict[str, str] = {
-    # Common treasury column names (adjust after inspecting the live portal)
     "Sr No"              : "serial_no",
     "Sr. No."            : "serial_no",
     "S.No"               : "serial_no",
+    "DDO"                : "ddo_code",
     "DDO Code"           : "ddo_code",
     "DDO Name"           : "ddo_name",
     "Treasury Code"      : "treasury_code",
@@ -87,11 +87,16 @@ COLUMN_RENAME_MAP: dict[str, str] = {
     "Amount"             : "amount",
     "Gross Amount"       : "amount",
     "Net Amount"         : "net_amount",
+    "Voucher Date"       : "payment_date",
     "Payment Date"       : "payment_date",
     "Date"               : "payment_date",
+    "Cheque No"          : "cheque_no",
     "Voucher No"         : "voucher_no",
     "Voucher Number"     : "voucher_no",
     "Bill No"            : "bill_no",
+    "Party Name"         : "party_name",
+    "UTR No"             : "utr_number",
+    "Status"             : "transaction_status",
     "Employee Name"      : "employee_name",
     "Bank Account No"    : "bank_account_no",
     "IFSC"               : "ifsc_code",
@@ -425,7 +430,7 @@ def merge_monthly_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
 
         all_frames = []
         for month in range(1, 13):
-            rows, tag = await run_extraction(year, month)
+            rows, tag = await run_extraction(ifsc, account_no, year, month)
             df = normalize(rows, engine_tag=tag)
             all_frames.append(df)
 

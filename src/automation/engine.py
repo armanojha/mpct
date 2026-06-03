@@ -107,6 +107,8 @@ CELL_SELECTOR   = "td"
 # Adjust these if the portal uses different names or IDs.
 YEAR_DROPDOWN_SELECTOR  = "select#ddlYear, select[name='ddlYear']"
 MONTH_DROPDOWN_SELECTOR = "select#ddlMonth, select[name='ddlMonth']"
+IFSC_INPUT_SELECTOR     = "input#ifscCode, input[name*='ifsc']"
+ACCOUNT_INPUT_SELECTOR  = "input#accountNo, input[name*='account']"
 SUBMIT_BUTTON_SELECTOR  = (
     "input[type='submit'][value*='Show'], "
     "button[type='submit'], "
@@ -129,8 +131,8 @@ EXCEL_MIME_TYPES = {
     "application/octet-stream",   # portal sometimes serves xlsx with this type
 }
 
-# Portal entry point (update to the live URL when deploying).
-PORTAL_BASE_URL = "https://www.mptreasury.gov.in/IFMIS/index.aspx"
+# Portal entry point.
+PORTAL_BASE_URL = "https://mptreasury.gov.in/MPCTP/portal.htm?viewName=myEPaymentStatusReport&registered=N"
 
 # How long (milliseconds) to wait for a selector before raising a timeout.
 NAV_TIMEOUT_MS    = 60_000   # 60 s  – page navigation
@@ -143,6 +145,8 @@ ELEMENT_TIMEOUT_MS = 30_000  # 30 s  – individual element appearance
 
 async def extract_via_dom(
     page: Page,
+    ifsc: str,
+    account_no: str,
     year: int,
     month: int,
 ) -> list[dict]:
@@ -153,8 +157,10 @@ async def extract_via_dom(
     Parameters
     ----------
     page  : an already-open Playwright Page (inside an isolated context)
-    year  : 4-digit fiscal year (e.g. 2024)
-    month : 1-based month number (1 = April for Indian fiscal calendar)
+    ifsc       : bank IFSC code used by the portal filter
+    account_no : bank account number used by the portal filter
+    year       : 4-digit fiscal year (e.g. 2024)
+    month      : 1-based month number (1 = April for Indian fiscal calendar)
 
     Returns
     -------
@@ -180,6 +186,12 @@ async def extract_via_dom(
     # `page.select_option` finds the <select> element by our CSS selector
     # and chooses the <option> whose `value` attribute matches the string.
     # ------------------------------------------------------------------
+    await page.fill(IFSC_INPUT_SELECTOR, ifsc)
+    logger.debug("[DOM] IFSC field filled.")
+
+    await page.fill(ACCOUNT_INPUT_SELECTOR, account_no)
+    logger.debug("[DOM] Account number field filled.")
+
     await page.select_option(YEAR_DROPDOWN_SELECTOR, str(year))
     logger.debug("[DOM] Year dropdown set to %s", year)
 
@@ -300,6 +312,8 @@ async def _find_table_element(page: Page):
 
 async def extract_via_excel_stream(
     page: Page,
+    ifsc: str,
+    account_no: str,
     year: int,
     month: int,
 ) -> list[dict]:
@@ -335,8 +349,10 @@ async def extract_via_excel_stream(
     Parameters
     ----------
     page  : an already-open Playwright Page
-    year  : 4-digit fiscal year
-    month : 1-based month
+    ifsc       : bank IFSC code used by the portal filter
+    account_no : bank account number used by the portal filter
+    year       : 4-digit fiscal year
+    month      : 1-based month
 
     Returns
     -------
@@ -353,6 +369,8 @@ async def extract_via_excel_stream(
     # we will refactor this into a shared _navigate_and_filter() helper.)
     # ------------------------------------------------------------------
     await page.goto(PORTAL_BASE_URL, wait_until="load", timeout=NAV_TIMEOUT_MS)
+    await page.fill(IFSC_INPUT_SELECTOR, ifsc)
+    await page.fill(ACCOUNT_INPUT_SELECTOR, account_no)
     await page.select_option(YEAR_DROPDOWN_SELECTOR, str(year))
     await page.select_option(MONTH_DROPDOWN_SELECTOR, str(month))
     await page.click(SUBMIT_BUTTON_SELECTOR)
@@ -456,6 +474,8 @@ async def extract_via_excel_stream(
 # ===========================================================================
 
 async def run_extraction(
+    ifsc: str,
+    account_no: str,
     year: int,
     month: int,
     headless: bool = True,
@@ -471,6 +491,8 @@ async def run_extraction(
 
     Parameters
     ----------
+    ifsc          : bank IFSC code used by the portal filter
+    account_no    : bank account number used by the portal filter
     year          : 4-digit year
     month         : 1-based month
     headless      : run Chromium without a visible window (True for servers)
@@ -508,24 +530,24 @@ async def run_extraction(
             if prefer_stream:
                 # Try stream first; fall back to DOM on failure.
                 try:
-                    rows = await extract_via_excel_stream(page, year, month)
+                    rows = await extract_via_excel_stream(page, ifsc, account_no, year, month)
                     return rows, "stream"
                 except ExtractionError as exc:
                     logger.warning(
                         "[ORCHESTRATOR] Stream engine failed (%s); falling back to DOM.", exc
                     )
-                    rows = await extract_via_dom(page, year, month)
+                    rows = await extract_via_dom(page, ifsc, account_no, year, month)
                     return rows, "dom"
             else:
                 # Default: DOM first, stream as fallback.
                 try:
-                    rows = await extract_via_dom(page, year, month)
+                    rows = await extract_via_dom(page, ifsc, account_no, year, month)
                     return rows, "dom"
                 except ExtractionError as exc:
                     logger.warning(
                         "[ORCHESTRATOR] DOM engine failed (%s); falling back to stream.", exc
                     )
-                    rows = await extract_via_excel_stream(page, year, month)
+                    rows = await extract_via_excel_stream(page, ifsc, account_no, year, month)
                     return rows, "stream"
 
         finally:
@@ -560,7 +582,13 @@ if __name__ == "__main__":
     )
 
     async def _smoke_test():
-        rows, engine = await run_extraction(year=2024, month=1, headless=False)
+        rows, engine = await run_extraction(
+            ifsc="",
+            account_no="",
+            year=2024,
+            month=1,
+            headless=False,
+        )
         print(f"\n✓ Engine used: {engine}")
         print(f"✓ Rows returned: {len(rows)}")
         if rows:
