@@ -88,12 +88,13 @@ assert abs(_total_weight - 1.0) < 1e-9, (
 # The canonical set of column names our transformer guarantees.
 # A new month's DataFrame must contain AT LEAST these columns.
 EXPECTED_COLUMNS: frozenset[str] = frozenset({
-    "serial_no",
     "ddo_code",
-    "ddo_name",
-    "amount",
     "payment_date",
-    "voucher_no",
+    "cheque_no",
+    "amount",
+    "party_name",
+    "utr_number",
+    "transaction_status",
 })
 
 # Column that holds monetary values — used for the numeric-validity check.
@@ -136,7 +137,7 @@ class ConfidenceReport:
     row_count       : int               = 0
 
     def __str__(self) -> str:
-        status = "PASS ✓" if self.passed else "FAIL ✗"
+        status = "PASS" if self.passed else "FAIL"
         lines = [
             f"ConfidenceReport [{status}]  score={self.score:.4f}  rows={self.row_count}",
         ]
@@ -144,7 +145,7 @@ class ConfidenceReport:
             raw = self.check_scores.get(name, 0.0)
             lines.append(f"  {name:<30s}  raw={raw:.2f}  weighted={ws:.4f}")
         for w in self.warnings:
-            lines.append(f"  ⚠  {w}")
+            lines.append(f"  WARNING  {w}")
         return "\n".join(lines)
 
 
@@ -533,12 +534,13 @@ if __name__ == "__main__":
 
     # Build a synthetic "good" DataFrame that should score >= 0.90
     _good_df = pd.DataFrame({
-        "serial_no"   : range(1, 121),
-        "ddo_code"    : [f"SBIN{i:06d}" for i in range(120)],
-        "ddo_name"    : [f"Office {i}" for i in range(120)],
-        "amount"      : [float(1000 + i * 10) for i in range(120)],
-        "payment_date": pd.date_range("2024-04-01", periods=120, freq="D"),
-        "voucher_no"  : [f"VCH-{i:04d}" for i in range(120)],
+        "ddo_code"          : [f"SBIN{i:06d}" for i in range(120)],
+        "payment_date"      : pd.date_range("2024-04-01", periods=120, freq="D"),
+        "cheque_no"         : [f"CHQ-{i:04d}" for i in range(120)],
+        "amount"            : [float(1000 + i * 10) for i in range(120)],
+        "party_name"        : [f"Party {i}" for i in range(120)],
+        "utr_number"        : [f"UTR{i:012d}" for i in range(120)],
+        "transaction_status": ["SUCCESS" for _ in range(120)],
     })
 
     print("\n=== GOOD DATA REPORT ===")
