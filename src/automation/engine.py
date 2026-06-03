@@ -109,15 +109,15 @@ YEAR_DROPDOWN_SELECTOR  = "select#ddlYear, select[name='ddlYear']"
 MONTH_DROPDOWN_SELECTOR = "select#ddlMonth, select[name='ddlMonth']"
 IFSC_INPUT_SELECTOR     = "input#ifscCode, input[name*='ifsc']"
 ACCOUNT_INPUT_SELECTOR  = "input#accountNo, input[name*='account']"
-SUBMIT_BUTTON_SELECTOR  = (
-    "input[type='submit'][value*='Show'], "
-    "button[type='submit'], "
-    "input#btnShow"
+SUBMIT_BUTTON_SELECTOR = (
+    "input[value='Generate Report'], "
+    "button:has-text('Generate Report'), "
+    "input[type='submit']"
 )
-EXPORT_BUTTON_SELECTOR  = (
-    "input[value*='Export'], "
-    "a[href*='ExcelExport'], "
-    "button:has-text('Export')"
+EXPORT_BUTTON_SELECTOR = (
+    "img[src*='excel'], "
+    "a:has-text('Excel'), "
+    "input[title*='Excel']"
 )
 
 # --- Loading / readiness signals ---
