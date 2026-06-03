@@ -171,16 +171,20 @@ class ExtractionJob:
 
     Fields
     ------
-    task_id         : unique job identifier (set by the API, echoed in responses)
-    year            : fiscal year to extract
-    months          : list of month numbers to extract (default: all 12)
-    result_future   : an asyncio.Future the API awaits to receive the result.
+    task_id       : unique job identifier (set by the API, echoed in responses)
+    ifsc          : bank IFSC code used by the portal filter
+    account_no    : bank account number used by the portal filter
+    year          : fiscal year to extract
+    months        : list of month numbers to extract (default: all 12)
+    result_future : an asyncio.Future the API awaits to receive the result.
                       When the Supervisor finishes, it puts the DataFrame (or
                       an exception) into this Future so the API endpoint can
                       stream it back to the client.
     submitted_at    : Unix timestamp when the job entered the queue
     """
     task_id       : str
+    ifsc          : str
+    account_no    : str
     year          : int
     months        : list[int]              = field(default_factory=lambda: list(range(1, 13)))
     result_future : Optional[asyncio.Future] = field(default=None, repr=False)
@@ -242,7 +246,12 @@ class AutomationSupervisor:
         supervisor = AutomationSupervisor()
         await supervisor.start()            # starts the worker loop
         ...
-        job = ExtractionJob(task_id="req-abc", year=2024)
+        job = ExtractionJob(
+            task_id="req-abc",
+            ifsc="SBIN0000377",
+            account_no="10554356145",
+            year=2024,
+        )
         await supervisor.submit(job)        # enqueue from any coroutine
         result_df = await job.result_future # await the result
         ...
@@ -464,6 +473,8 @@ class AutomationSupervisor:
 
                 month_df = await self._extract_month_with_retry(
                     task_state=task_state,
+                    ifsc=job.ifsc,
+                    account_no=job.account_no,
                     year=job.year,
                     month=month,
                 )
@@ -504,6 +515,8 @@ class AutomationSupervisor:
     async def _extract_month_with_retry(
         self,
         task_state: TaskState,
+        ifsc: str,
+        account_no: str,
         year: int,
         month: int,
     ) -> pd.DataFrame:
@@ -548,7 +561,13 @@ class AutomationSupervisor:
 
                 try:
                     dom_rows, _ = await asyncio.wait_for(
-                        run_extraction(year=year, month=month, headless=True),
+                        run_extraction(
+                            ifsc=ifsc,
+                            account_no=account_no,
+                            year=year,
+                            month=month,
+                            headless=True,
+                        ),
                         timeout=EXTRACTION_TIMEOUT_SECONDS,
                     )
                     task_state.advance_state(WorkflowState.RESULTS_LOADING)
@@ -592,8 +611,12 @@ class AutomationSupervisor:
                     try:
                         stream_rows, _ = await asyncio.wait_for(
                             run_extraction(
-                                year=year, month=month,
-                                headless=True, prefer_stream=True,
+                                ifsc=ifsc,
+                                account_no=account_no,
+                                year=year,
+                                month=month,
+                                headless=True,
+                                prefer_stream=True,
                             ),
                             timeout=EXTRACTION_TIMEOUT_SECONDS,
                         )
@@ -822,6 +845,8 @@ if __name__ == "__main__":
 
         job = ExtractionJob(
             task_id       = f"smoke-{_uuid.uuid4().hex[:6]}",
+            ifsc          = "SBIN0000377",
+            account_no    = "10554356145",
             year          = 2024,
             months        = [1, 2],    # only 2 months for speed in smoke test
             result_future = fut,
