@@ -305,22 +305,29 @@
     /* ── Constants ─────────────────────────────────────────────────── */
     const API_ENDPOINT = "http://127.0.0.1:8000/api/v1/extract";
 
-    // Indian fiscal calendar: month 1 = April, month 12 = March
+    // April-first display order, calendar-month values sent to the backend.
     const MONTH_META = [
-      { n: 1,  label: "Apr" }, { n: 2,  label: "May" },
-      { n: 3,  label: "Jun" }, { n: 4,  label: "Jul" },
-      { n: 5,  label: "Aug" }, { n: 6,  label: "Sep" },
-      { n: 7,  label: "Oct" }, { n: 8,  label: "Nov" },
-      { n: 9,  label: "Dec" }, { n: 10, label: "Jan" },
-      { n: 11, label: "Feb" }, { n: 12, label: "Mar" },
+      { name: "April",     label: "Apr", value: 4  },
+      { name: "May",       label: "May", value: 5  },
+      { name: "June",      label: "Jun", value: 6  },
+      { name: "July",      label: "Jul", value: 7  },
+      { name: "August",    label: "Aug", value: 8  },
+      { name: "September", label: "Sep", value: 9  },
+      { name: "October",   label: "Oct", value: 10 },
+      { name: "November",  label: "Nov", value: 11 },
+      { name: "December",  label: "Dec", value: 12 },
+      { name: "January",   label: "Jan", value: 1  },
+      { name: "February",  label: "Feb", value: 2  },
+      { name: "March",     label: "Mar", value: 3  },
     ];
+    const MONTH_BY_VALUE = Object.fromEntries(MONTH_META.map(m => [m.value, m]));
 
     const QUICK_SELECT = [
-      { label: "Q1 (Apr–Jun)",  months: [1, 2, 3]  },
-      { label: "Q2 (Jul–Sep)",  months: [4, 5, 6]  },
-      { label: "Q3 (Oct–Dec)",  months: [7, 8, 9]  },
-      { label: "Q4 (Jan–Mar)",  months: [10, 11, 12] },
-      { label: "Select All",    months: [1,2,3,4,5,6,7,8,9,10,11,12] },
+      { label: "Q1 (Apr–Jun)",  months: [4, 5, 6]  },
+      { label: "Q2 (Jul–Sep)",  months: [7, 8, 9]  },
+      { label: "Q3 (Oct–Dec)",  months: [10, 11, 12] },
+      { label: "Q4 (Jan–Mar)",  months: [1, 2, 3] },
+      { label: "Select All",    months: MONTH_META.map(m => m.value) },
     ];
 
     // Build fiscal year options: current year ± 5
@@ -545,13 +552,13 @@
 
               {/* Month Grid */}
               <div className="month-grid">
-                {MONTH_META.map(({ n, label }) => (
+                {MONTH_META.map(({ value, label }) => (
                   <div
-                    key={n}
-                    className={`month-cell${months.includes(n) ? " selected" : ""}`}
-                    onClick={() => !isLoading && toggleMonth(n)}
+                    key={value}
+                    className={`month-cell${months.includes(value) ? " selected" : ""}`}
+                    onClick={() => !isLoading && toggleMonth(value)}
                   >
-                    <span className="m-num">{n}</span>
+                    <span className="m-num">{value}</span>
                     <span className="m-name">{label}</span>
                   </div>
                 ))}
@@ -560,7 +567,7 @@
               <p className="month-hint">
                 {months.length === 0
                   ? "Select at least one month to proceed."
-                  : <><span>{months.length}</span> month{months.length > 1 ? "s" : ""} selected — {months.map(m => MONTH_META[m-1].label).join(", ")}</>
+                  : <><span>{months.length}</span> month{months.length > 1 ? "s" : ""} selected — {months.map(m => MONTH_BY_VALUE[m]?.label || m).join(", ")}</>
                 }
               </p>
             </div>

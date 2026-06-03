@@ -139,8 +139,12 @@ VALID_TRANSITIONS: dict[WorkflowState, set[WorkflowState]] = {
     },
     WorkflowState.CHECKPOINT_SAVED: {
         # After saving a monthly checkpoint the machine is ready to
-        # start the next month (loops back to NAVIGATED) or finish.
-        WorkflowState.NAVIGATED,
+        # start the next month (loops back to INIT for a clean per-month
+        # reset) or finish the job entirely.
+        # NAVIGATED is intentionally removed: the Supervisor now resets
+        # to INIT at the top of every attempt, which is cleaner than
+        # jumping mid-graph to NAVIGATED.
+        WorkflowState.INIT,
         WorkflowState.FAILED,
     },
     WorkflowState.FAILED: set(),   # terminal – no outgoing transitions

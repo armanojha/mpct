@@ -52,6 +52,8 @@ between concurrent user requests.
 import asyncio
 import io
 import logging
+import os
+import winreg
 from typing import Optional
 
 import pandas as pd
@@ -91,12 +93,23 @@ logger = logging.getLogger(__name__)
 
 # --- Primary engine (DOM) ---
 
-# The main data grid.  We use a broad selector first so the fallback chain
-# (see _find_table_element) can narrow it down at runtime.
-TABLE_CSS_BROAD      = "table"
+# The main data grid.  We use a STRICT selector chain targeting the INNERMOST
+# data table that contains the actual disbursement rows.  The portal wraps its
+# entire layout in nested <table> elements.  The old TABLE_CSS_BROAD selector
+# ("table:has(th)") matched the outermost layout table and caused the entire
+# page to be scraped as a single text blob.  These selectors now anchor on the
+# presence of the semantic "Amount" header so only the data table is matched.
+#
+# Selector priority (most-specific → most-general):
+#   1. By explicit id="tblReport"              – exact id match
+#   2. By class="report-table"                 – class-based match
+#   3. XPath: table whose <th> contains 'Amount' (case-insensitive)
+#   4. CSS:   same semantic anchor via :has(th)
+TABLE_CSS_BROAD      = "table:has(th)"
 TABLE_CSS_REPORT     = "table.report-table"
 TABLE_CSS_ID         = "table#tblReport"
-TABLE_XPATH_FALLBACK = "//table[contains(@class,'tbl') or contains(@id,'Report')]"
+TABLE_XPATH_FALLBACK = "//table[.//th[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'amount')]]"
+TABLE_CSS_AMOUNT     = "table:has(th:text-matches('Amount', 'i'))"
 
 # Individual row and cell selectors, scoped INSIDE the table element.
 ROW_SELECTOR    = "tr"
@@ -104,11 +117,28 @@ HEADER_SELECTOR = "th"
 CELL_SELECTOR   = "td"
 
 # The portal's navigation / filter form elements.
-# Adjust these if the portal uses different names or IDs.
-YEAR_DROPDOWN_SELECTOR  = "select#ddlYear, select[name='ddlYear']"
-MONTH_DROPDOWN_SELECTOR = "select#ddlMonth, select[name='ddlMonth']"
-IFSC_INPUT_SELECTOR     = "input#ifscCode, input[name*='ifsc']"
-ACCOUNT_INPUT_SELECTOR  = "input#accountNo, input[name*='account']"
+#
+# CONFIRMED from live browser screenshot (2026-06-03):
+# Year(YYYY) and Month(MM) are plain <input type="text"> fields — NOT <select>
+# dropdowns.  The original select#ddlYear selectors caused 30s timeouts.
+# We now use a broad keyword fallback chain so the engine self-heals if the
+# portal renames fields again.  The real attribute names are discovered at
+# runtime via _discover_form_fields() and logged at DEBUG level.
+YEAR_INPUT_SELECTOR = (
+    "input#txtYear, input[name='txtYear'], "
+    "input[id*='Year' i]:not([id*='account' i]):not([id*='ifsc' i]), "
+    "input[name*='year' i]:not([name*='account' i]):not([name*='ifsc' i])"
+)
+MONTH_INPUT_SELECTOR = (
+    "input#txtMonth, input[name='txtMonth'], "
+    "input[id*='Month' i], "
+    "input[name*='month' i]"
+)
+# Keep legacy names so the rest of the codebase compiles unchanged.
+YEAR_DROPDOWN_SELECTOR  = YEAR_INPUT_SELECTOR
+MONTH_DROPDOWN_SELECTOR = MONTH_INPUT_SELECTOR
+IFSC_INPUT_SELECTOR     = "input#ifscCode, input[name*='ifsc' i]"
+ACCOUNT_INPUT_SELECTOR  = "input#accountNo, input[name*='account' i]"
 SUBMIT_BUTTON_SELECTOR = (
     "input[value='Generate Report'], "
     "button:has-text('Generate Report'), "
@@ -120,9 +150,19 @@ EXPORT_BUTTON_SELECTOR = (
     "input[title*='Excel']"
 )
 
+# Selector that matches the portal's "no results" message.
+# We use Playwright's text= pseudo-selector with /regex/i for case-insensitive
+# matching so minor wording changes on the portal side don't break us.
+NO_DATA_SELECTOR = (
+    "text=/no data available/i, "
+    "text=/no records found/i, "
+    "text=/no data found/i, "
+    "text=/record not found/i"
+)
+
 # --- Loading / readiness signals ---
-# We wait for this selector to appear before we trust the DOM is fully painted.
-TABLE_LOADED_SELECTOR = f"{TABLE_CSS_REPORT}, {TABLE_CSS_ID}, {TABLE_CSS_BROAD}"
+# We wait for the export control before trusting that results are ready.
+TABLE_LOADED_SELECTOR = EXPORT_BUTTON_SELECTOR
 
 # MIME types we treat as Excel binary streams.
 EXCEL_MIME_TYPES = {
@@ -137,6 +177,71 @@ PORTAL_BASE_URL = "https://mptreasury.gov.in/MPCTP/portal.htm?viewName=myEPaymen
 # How long (milliseconds) to wait for a selector before raising a timeout.
 NAV_TIMEOUT_MS    = 60_000   # 60 s  – page navigation
 ELEMENT_TIMEOUT_MS = 30_000  # 30 s  – individual element appearance
+
+
+# ===========================================================================
+# PROXY AUTO-DETECTION  (Windows Registry → Internet Options → LAN Settings)
+# ===========================================================================
+
+def _get_windows_proxy() -> Optional[str]:
+    """
+    Read the system proxy server from the Windows Registry — the same source
+    that Chrome, Edge, and Internet Explorer use when "Use system proxy" is
+    enabled in their settings.
+
+    WHY THIS MATTERS
+    ----------------
+    When a real user opens Chrome, Windows automatically injects the proxy
+    settings from Control Panel → Internet Options → LAN Settings into every
+    browser process.  Playwright spawns Chromium as a raw subprocess WITHOUT
+    that Windows hook, so the browser sees no proxy and all connections to
+    external sites time out.
+
+    REGISTRY PATH
+    -------------
+    HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings
+      ProxyEnable   (DWORD)  1 = proxy is on, 0 = proxy is off
+      ProxyServer   (STRING) e.g. "myproxy.corp.com:8080"
+
+    If ProxyEnable is 0 or the key doesn't exist, we return None (no proxy
+    needed, so don't pass --proxy-server to Chromium).
+
+    Returns
+    -------
+    Proxy string such as "http://myproxy.corp.com:8080", or None.
+    """
+    # Allow manual override via environment variable first.
+    # Set MPCT_PROXY=http://myproxy:8080 in your .env or shell to force a proxy.
+    env_proxy = os.environ.get("MPCT_PROXY", "").strip()
+    if env_proxy:
+        logger.info("[PROXY] Using proxy from MPCT_PROXY env var: %s", env_proxy)
+        return env_proxy
+
+    try:
+        reg_path = (
+            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        )
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, reg_path) as key:
+            proxy_enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
+            if not proxy_enable:
+                logger.debug("[PROXY] Windows proxy is disabled (ProxyEnable=0).")
+                return None
+
+            proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
+            proxy_server = proxy_server.strip()
+            if not proxy_server:
+                return None
+
+            # Ensure the proxy string has a scheme so Chromium accepts it.
+            if not proxy_server.startswith(("http://", "https://", "socks5://")):
+                proxy_server = f"http://{proxy_server}"
+
+            logger.info("[PROXY] Detected Windows system proxy: %s", proxy_server)
+            return proxy_server
+
+    except (FileNotFoundError, OSError, PermissionError) as exc:
+        logger.debug("[PROXY] Could not read proxy from registry: %s", exc)
+        return None
 
 
 # ===========================================================================
@@ -174,29 +279,48 @@ async def extract_via_dom(
     logger.info("[DOM] Starting DOM extraction – year=%s month=%s", year, month)
 
     # ------------------------------------------------------------------
-    # STEP 1 – Navigate to the portal landing page.
-    # `await` pauses this coroutine until the browser reports the page has
-    # finished loading ("load" event fired by the browser).
+    # STEP 1 – Navigate directly to the report deep-link.
+    #
+    # CONFIRMED via manual browser test: the portal serves the E-Payment
+    # Status form immediately on the deep-link — no session priming or
+    # homepage visit required.  The previous session-priming goto() added
+    # an extra 23-second timeout hit on every extraction; it is removed.
+    #
+    # wait_until="domcontentloaded" fires as soon as the HTML is parsed,
+    # before images/fonts/analytics load — correct for a scraping workflow.
     # ------------------------------------------------------------------
-    await page.goto(PORTAL_BASE_URL, wait_until="load", timeout=NAV_TIMEOUT_MS)
-    logger.debug("[DOM] Portal landing page loaded.")
+    await page.goto(PORTAL_BASE_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+    logger.debug("[DOM] Portal form loaded (domcontentloaded).")
 
     # ------------------------------------------------------------------
     # STEP 2 – Fill the filter form (year + month dropdowns).
     # `page.select_option` finds the <select> element by our CSS selector
     # and chooses the <option> whose `value` attribute matches the string.
     # ------------------------------------------------------------------
+    # ---------------------------------------------------------------
+    # DIAGNOSTIC: log every input's id/name/type so we can confirm the
+    # real selectors if the portal ever renames fields again.
+    # ---------------------------------------------------------------
+    form_fields = await page.evaluate("""
+        () => Array.from(document.querySelectorAll('input, select')).map(el => ({
+            tag: el.tagName, id: el.id, name: el.name, type: el.type,
+            placeholder: el.placeholder
+        }))
+    """)
+    logger.info("[DOM] Form fields discovered: %s", form_fields)
+
     await page.fill(IFSC_INPUT_SELECTOR, ifsc)
     logger.debug("[DOM] IFSC field filled.")
 
     await page.fill(ACCOUNT_INPUT_SELECTOR, account_no)
     logger.debug("[DOM] Account number field filled.")
 
-    await page.select_option(YEAR_DROPDOWN_SELECTOR, str(year))
-    logger.debug("[DOM] Year dropdown set to %s", year)
+    # Year and Month are plain text inputs (confirmed 2026-06-03) — use fill().
+    await page.fill(YEAR_DROPDOWN_SELECTOR, str(year))
+    logger.debug("[DOM] Year field filled: %s", year)
 
-    await page.select_option(MONTH_DROPDOWN_SELECTOR, str(month))
-    logger.debug("[DOM] Month dropdown set to %s", month)
+    await page.fill(MONTH_DROPDOWN_SELECTOR, str(month))
+    logger.debug("[DOM] Month field filled: %s", month)
 
     # ------------------------------------------------------------------
     # STEP 3 – Submit the form and wait for the results table to appear.
@@ -206,21 +330,36 @@ async def extract_via_dom(
     # response has finished painting the DOM.
     # ------------------------------------------------------------------
     await page.click(SUBMIT_BUTTON_SELECTOR)
-    logger.debug("[DOM] Submit button clicked, waiting for table…")
+    logger.debug("[DOM] Submit button clicked, waiting for table or no-data message…")
 
-    await page.wait_for_selector(
-        TABLE_LOADED_SELECTOR,
+    # Safely wait for EITHER the table OR the "no data" text using Playwright Locators.
+    await page.locator(TABLE_LOADED_SELECTOR).or_(page.locator(NO_DATA_SELECTOR)).first.wait_for(
         state="visible",
         timeout=ELEMENT_TIMEOUT_MS,
     )
-    logger.info("[DOM] Results table appeared in DOM.")
+
+    # Check which branch appeared: no-data message or real table.
+    no_data_el = await page.query_selector(NO_DATA_SELECTOR)
+    if no_data_el:
+        logger.info(
+            "[DOM] No data available for year=%s month=%s — portal returned empty result.",
+            year, month,
+        )
+        return []
 
     # ------------------------------------------------------------------
     # STEP 4 – Locate the best <table> element via a selector fallback chain.
     # Web portals sometimes change class names but keep the overall structure.
     # We try the most specific selector first and fall back to broader ones.
     # ------------------------------------------------------------------
-    table_element = await _find_table_element(page)
+    try:
+        table_element = await _find_table_element(page)
+    except ExtractionError:
+        logger.info(
+            "[DOM] No table found for year=%s month=%s. Assuming zero transactions.",
+            year, month,
+        )
+        return []
 
     # ------------------------------------------------------------------
     # STEP 5 – Extract headers from <th> cells inside the first <tr>.
@@ -287,11 +426,17 @@ async def _find_table_element(page: Page):
     This is a private function (leading underscore convention in Python).
     It is NOT part of the public API of this module.
     """
+    # Selectors ordered from most-specific to most-general.
+    # XPath selectors require the "xpath=" prefix in Playwright.
+    # We intentionally keep TABLE_CSS_BROAD last as a safety net only;
+    # the XPath and TABLE_CSS_AMOUNT anchors on "Amount" ensure we never
+    # match the outer layout table that wraps the entire page.
     selector_priority = [
-        TABLE_CSS_ID,           # most specific → exact id match
-        TABLE_CSS_REPORT,       # class-based match
-        TABLE_XPATH_FALLBACK,   # XPath heuristic
-        TABLE_CSS_BROAD,        # last resort: first <table> on the page
+        TABLE_CSS_ID,                       # exact id match
+        TABLE_CSS_REPORT,                   # class-based match
+        TABLE_CSS_AMOUNT,                   # CSS: table with Amount <th>
+        f"xpath={TABLE_XPATH_FALLBACK}",    # XPath: table with Amount <th>
+        TABLE_CSS_BROAD,                    # last resort: any table with <th>
     ]
 
     for selector in selector_priority:
@@ -368,13 +513,29 @@ async def extract_via_excel_stream(
     # (DRY – Don't Repeat Yourself – is a valid concern here; in Phase 2
     # we will refactor this into a shared _navigate_and_filter() helper.)
     # ------------------------------------------------------------------
-    await page.goto(PORTAL_BASE_URL, wait_until="load", timeout=NAV_TIMEOUT_MS)
+    # Navigate directly to the report deep-link (no session priming needed —
+    # confirmed via manual browser test that the portal serves the form
+    # immediately without requiring a homepage visit first).
+    await page.goto(PORTAL_BASE_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
     await page.fill(IFSC_INPUT_SELECTOR, ifsc)
     await page.fill(ACCOUNT_INPUT_SELECTOR, account_no)
-    await page.select_option(YEAR_DROPDOWN_SELECTOR, str(year))
-    await page.select_option(MONTH_DROPDOWN_SELECTOR, str(month))
+    # Year and Month are plain text inputs (confirmed 2026-06-03) — use fill().
+    await page.fill(YEAR_DROPDOWN_SELECTOR, str(year))
+    await page.fill(MONTH_DROPDOWN_SELECTOR, str(month))
     await page.click(SUBMIT_BUTTON_SELECTOR)
-    await page.wait_for_selector(TABLE_LOADED_SELECTOR, state="visible", timeout=ELEMENT_TIMEOUT_MS)
+    # Safely wait for EITHER the table OR the "no data" text using Playwright Locators.
+    await page.locator(TABLE_LOADED_SELECTOR).or_(page.locator(NO_DATA_SELECTOR)).first.wait_for(
+        state="visible",
+        timeout=ELEMENT_TIMEOUT_MS,
+    )
+
+    # Short-circuit: if the portal reported no data, return empty immediately.
+    if await page.query_selector(NO_DATA_SELECTOR):
+        logger.info(
+            "[STREAM] No data available for year=%s month=%s — skipping export.",
+            year, month,
+        )
+        return []
 
     # ------------------------------------------------------------------
     # Set up the Future that the response handler will resolve.
@@ -510,7 +671,73 @@ async def run_extraction(
         # Even if an exception is raised mid-way, Playwright will close
         # the browser when the block exits.
 
-        browser: Browser = await pw.chromium.launch(headless=headless)
+        # ---------------------------------------------------------------
+        # PROXY DETECTION  (fixes ERR_CONNECTION_TIMED_OUT on Windows)
+        # ---------------------------------------------------------------
+        # Detect the system proxy BEFORE launching the browser so we can
+        # pass it as a --proxy-server flag.  See _get_windows_proxy() above
+        # for the full explanation of why this is necessary.
+        # ---------------------------------------------------------------
+        system_proxy = _get_windows_proxy()
+
+        # ---------------------------------------------------------------
+        # CONNECTIVITY FIX — Launch using the system-installed Google Chrome
+        # instead of Playwright's bundled Chromium binary.
+        #
+        # WHY THIS SOLVES ERR_CONNECTION_TIMED_OUT
+        # -----------------------------------------
+        # Playwright ships with its OWN Chromium build stored in a path like:
+        #   %APPDATA%\Local\ms-playwright\chromium-XXXX\chrome-win\chrome.exe
+        # Windows Firewall and antivirus products treat this as an unknown
+        # executable and block its outbound TCP connections by default.
+        # Your installed Google Chrome (C:\Program Files\Google\Chrome\...)
+        # is already on the OS firewall allowlist and inherits the system's
+        # trusted-browser network permissions.
+        #
+        # `channel="chrome"` tells Playwright to find and launch the system
+        # Chrome instead of its bundled Chromium.  The Playwright protocol
+        # (CDP) works identically against both — all our automation code
+        # runs unchanged.
+        #
+        # FALLBACK: if Chrome is not installed, we fall back to bundled
+        # Chromium with a clear log message so the error is obvious.
+        #
+        # ARGS NOTE: --disable-blink-features=AutomationControlled still
+        # applies to Chrome the same way it does to Chromium.
+        # ---------------------------------------------------------------
+        chromium_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--disable-infobars",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-extensions",
+        ]
+        if system_proxy:
+            chromium_args.append(f"--proxy-server={system_proxy}")
+            logger.info("[ENGINE] Browser will route through proxy: %s", system_proxy)
+
+        try:
+            browser: Browser = await pw.chromium.launch(
+                channel="chrome",       # ← use installed Google Chrome
+                headless=headless,
+                args=chromium_args,
+            )
+            logger.info("[ENGINE] Launched system Google Chrome (channel='chrome').")
+        except Exception as chrome_exc:
+            # Chrome not installed — fall back to bundled Chromium.
+            # This will fail on a firewall-restricted machine but gives a
+            # clear error message rather than a silent 23-second timeout.
+            logger.warning(
+                "[ENGINE] Could not launch system Chrome (%s). "
+                "Falling back to bundled Chromium — this may fail if "
+                "Windows Firewall is blocking the Playwright binary. "
+                "Install Google Chrome to fix this permanently.",
+                chrome_exc,
+            )
+            browser: Browser = await pw.chromium.launch(
+                headless=headless,
+                args=chromium_args,
+            )
 
         # An isolated context means no cookies or local storage from
         # previous runs will interfere with this job.
@@ -523,7 +750,107 @@ async def run_extraction(
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/124.0.0.0 Safari/537.36"
             ),
+            # STEALTH FIX 3 – Realistic viewport
+            # ---------------------------------------------------------------
+            # The default Playwright headless viewport is 1280×720 with a
+            # device_scale_factor of 1 — a signature fingerprint that many
+            # WAFs key on (real monitors almost never report that exact combo).
+            # Setting a full-HD 1920×1080 viewport makes the browser profile
+            # match the most common desktop resolution reported by real users.
+            # ---------------------------------------------------------------
+            viewport={"width": 1920, "height": 1080},
+            # FIX 1 — IGNORE HTTPS CERTIFICATE ERRORS
+            # Indian government portals frequently have expired or self-signed
+            # TLS certificates.  Without this flag, Chromium refuses to load
+            # the page at all and the goto() times out on a blank ERR_CERT_*
+            # error screen rather than the actual portal.
+            # Equivalent to clicking "Advanced → Proceed anyway" in the browser.
+            ignore_https_errors=True,
+            # FIX 3 — EXTRA HEADERS FOR HUMAN-LIKE FOOTPRINT
+            # A bare Playwright context sends only minimal headers.  Real
+            # browsers always send Accept-Language and Upgrade-Insecure-Requests.
+            # Some WAFs (Web Application Firewalls) and legacy Java/ASP.NET
+            # portals flag requests that are missing these standard headers as
+            # automated bots and serve a blank page or redirect to an error.
+            extra_http_headers={
+                "Accept-Language": "en-US,en;q=0.9",
+                "Upgrade-Insecure-Requests": "1",
+            },
         )
+
+        # ---------------------------------------------------------------
+        # STEALTH FIX 2 – Spoof navigator.webdriver via add_init_script
+        # ---------------------------------------------------------------
+        # Even with --disable-blink-features=AutomationControlled, Playwright
+        # still injects a CDP (Chrome DevTools Protocol) binding that sets
+        # `navigator.webdriver = true` at the JS level.  This is the single
+        # most-checked property in WAF fingerprinting scripts (e.g. Distil,
+        # Cloudflare, DataDome all test it in their first JS probe).
+        #
+        # `context.add_init_script()` injects JavaScript that runs in EVERY
+        # page — and crucially, runs BEFORE any page script executes.  This
+        # means our override is in place before the WAF's detection code runs.
+        #
+        # We use Object.defineProperty to redefine the descriptor of
+        # `navigator.webdriver` so that:
+        #   • get()  → always returns `undefined` (same as a real browser)
+        #   • The property appears non-configurable to further probes
+        #
+        # We also delete `window.navigator.permissions.query`'s automation-
+        # specific override, restore `window.chrome` so chrome.runtime exists
+        # (absence is a strong bot signal on Chrome-targeted WAFs), and spoof
+        # the plugins array length (headless Chrome reports 0 plugins; real
+        # Chrome typically reports 3+).
+        # ---------------------------------------------------------------
+        await context.add_init_script("""
+            // 1. Hide navigator.webdriver
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined,
+                configurable: true,
+            });
+
+            // 2. Restore window.chrome so chrome.runtime is present
+            //    (Headless Chrome omits this object entirely)
+            if (!window.chrome) {
+                window.chrome = {
+                    runtime: {},
+                    loadTimes: function() {},
+                    csi: function() {},
+                    app: {},
+                };
+            }
+
+            // 3. Spoof plugins array  (real Chrome ships with 3 default plugins)
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => {
+                    const arr = [
+                        { name: 'Chrome PDF Plugin',         filename: 'internal-pdf-viewer' },
+                        { name: 'Chrome PDF Viewer',         filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+                        { name: 'Native Client',             filename: 'internal-nacl-plugin' },
+                    ];
+                    arr.__proto__ = PluginArray.prototype;
+                    return arr;
+                },
+            });
+
+            // 4. Spoof languages array  (headless often returns [])
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en'],
+            });
+
+            // 5. Fix the Notification permissions probe
+            //    (headless Chrome returns 'denied' by default; real browsers
+            //    return 'default' until the user is actually asked)
+            const originalQuery = window.navigator.permissions
+                ? window.navigator.permissions.query.bind(window.navigator.permissions)
+                : null;
+            if (originalQuery) {
+                window.navigator.permissions.query = (parameters) =>
+                    parameters.name === 'notifications'
+                        ? Promise.resolve({ state: 'default' })
+                        : originalQuery(parameters);
+            }
+        """)
         page: Page = await context.new_page()
 
         try:

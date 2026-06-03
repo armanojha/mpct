@@ -119,10 +119,148 @@ DATE_COLUMNS: list[str] = [
 # The sentinel column added to every output DataFrame.
 EXTRACTION_ENGINE_COLUMN = "_extraction_engine"
 
+# ---------------------------------------------------------------------------
+# STRICT OUTPUT SCHEMA
+# ---------------------------------------------------------------------------
+# The 7 canonical columns from the portal, in display order.
+# Any column not in this list (plus the metadata columns below) is dropped.
+# This is the contract between the transformer and the final Excel export.
+# ---------------------------------------------------------------------------
+CORE_COLUMNS: list[str] = [
+    "ddo_code",
+    "payment_date",
+    "cheque_no",
+    "amount",
+    "party_name",
+    "utr_number",
+    "transaction_status",
+]
 
-# ===========================================================================
-# PRIMARY PUBLIC FUNCTION
-# ===========================================================================
+# Optional columns appended by the Supervisor (year / month context).
+METADATA_COLUMNS: list[str] = [
+    "year",
+    "month",
+    EXTRACTION_ENGINE_COLUMN,
+]
+
+# ---------------------------------------------------------------------------
+# UI GARBAGE PATTERNS
+# ---------------------------------------------------------------------------
+# Case-insensitive substrings that only appear in portal chrome / layout
+# cells — never in real DDO disbursement data.
+# When ANY of these is found anywhere in a row's text the row is discarded.
+# ---------------------------------------------------------------------------
+_UI_KEYWORDS: tuple[str, ...] = (
+    "print",
+    "export",
+    "pages :",
+    "displaying",
+    "total visits",
+    "thank you for visiting",
+    "terms of use",
+    "this website was last updated",
+    "server name:",
+    "logged in user:",
+    "report generated time:",
+    "account no::",
+    "ifsc code:",
+    "year(yyyy)::",
+    "month(mm)::",
+    "e-payment status",
+    "sitemap",
+    "feedback",
+    "sign in",
+    "hindi",
+    "theme",
+    "home\\n",
+    "about us\\n",
+    "circulars",
+    "citizen charter",
+    "codes/rules",
+    "version :",
+    "copyright",
+    "designed, developed",
+    "screen resolution",
+    "production environment",
+    "a a a",
+)
+
+
+# ---------------------------------------------------------------------------
+# PRE-NORMALIZATION RAW ROW RESCUE
+# ---------------------------------------------------------------------------
+# Root-cause defence: if engine.py ever returns rows where a single cell
+# contains the entire page text as a multi-line/tab-separated blob (the
+# symptom seen when the layout table is scraped instead of the data table),
+# this function surgically extracts only the real transaction rows before
+# the DataFrame is even constructed.
+#
+# Detection heuristic: if any value in a raw dict is a multi-line string
+# that itself contains tab-separated DDO/Amount/UTR content, we split it
+# into proper row dicts using the embedded TSV structure.
+# ---------------------------------------------------------------------------
+
+_BLOB_EXPECTED_HEADERS = {
+    "ddo", "voucher date", "cheque no", "amount", "party name", "utr no", "status"
+}
+
+
+def _rescue_blob_rows(raw_rows: list[dict]) -> list[dict]:
+    """
+    If the engine accidentally scraped the entire page as a text blob inside
+    a single cell (because it matched the layout table instead of the data
+    table), parse out the real transaction rows from the embedded TSV content.
+
+    If the rows look normal (each dict has 5-9 reasonable-length string values
+    that aren't multi-line page dumps), they pass through unchanged.
+    """
+    rescued: list[dict] = []
+
+    for row in raw_rows:
+        values = list(row.values())
+        # Detect blob: any value is a multi-line string AND contains the
+        # canonical header words (meaning the whole page was crammed in).
+        blob_value = None
+        for v in values:
+            if isinstance(v, str) and "\n" in v and "Amount" in v and "DDO" in v:
+                blob_value = v
+                break
+
+        if blob_value is None:
+            # Normal row — pass through unchanged.
+            rescued.append(row)
+            continue
+
+        # Parse the embedded TSV inside the blob.
+        lines = [ln.strip() for ln in blob_value.splitlines()]
+        headers: list[str] = []
+        for line in lines:
+            if not line:
+                continue
+            parts = [p.strip() for p in line.split("\t")]
+            # Identify the header row by checking if its parts match portal headers.
+            if not headers:
+                lower_parts = {p.lower() for p in parts}
+                if lower_parts & _BLOB_EXPECTED_HEADERS:
+                    headers = parts
+                    continue
+            else:
+                # Data row: must have at least as many columns as headers.
+                if len(parts) >= len(headers):
+                    row_dict = dict(zip(headers, parts))
+                    rescued.append(row_dict)
+                    logger.debug(
+                        "[TRANSFORMER] Rescued blob row: %s", row_dict
+                    )
+
+    if len(rescued) != len(raw_rows):
+        logger.warning(
+            "[TRANSFORMER] _rescue_blob_rows: input had %d rows, output has %d "
+            "(blob rows were unpacked into individual transaction rows).",
+            len(raw_rows), len(rescued),
+        )
+    return rescued
+
 
 def normalize(
     raw_rows: list[dict],
@@ -167,6 +305,18 @@ def normalize(
     # ------------------------------------------------------------------
     if not raw_rows:
         logger.warning("[TRANSFORMER] No rows to transform; returning empty DataFrame.")
+        return pd.DataFrame()
+
+    # ------------------------------------------------------------------
+    # STEP 0 – Pre-normalization blob rescue.
+    # If the extraction engine accidentally scraped a layout table and
+    # returned the entire page as a multi-line blob in one cell, extract
+    # the real transaction rows from the embedded TSV before we build the
+    # DataFrame. Normal rows pass through this function unchanged.
+    # ------------------------------------------------------------------
+    raw_rows = _rescue_blob_rows(raw_rows)
+    if not raw_rows:
+        logger.warning("[TRANSFORMER] No valid rows survived blob rescue; returning empty DataFrame.")
         return pd.DataFrame()
 
     df = pd.DataFrame(raw_rows)
@@ -247,11 +397,72 @@ def normalize(
         df["ifsc_code"] = df["ifsc_code"].str.upper().str.strip()
 
     # ------------------------------------------------------------------
-    # STEP 8 – Remove exact duplicate rows.
+    # STEP 8 – RUTHLESS ROW FILTERING (UI garbage elimination).
     #
-    # `keep="first"` keeps the first occurrence and drops all subsequent
-    # copies.  This protects against pagination overlap where the portal
-    # returns the last row of page N as the first row of page N+1.
+    # The portal uses nested <table> elements for page layout, so the DOM
+    # engine may scrape navigation bars, pagination controls, footer text,
+    # and report-header metadata alongside real data rows.
+    #
+    # We apply THREE independent filters — a row must PASS ALL THREE to
+    # survive into the final DataFrame.
+    #
+    # Filter A – amount must be a valid, non-zero float.
+    #   Any row without a parseable numeric amount is layout / header noise.
+    #
+    # Filter B – payment_date must have resolved to a real datetime.
+    #   NaT means the cell was blank, a label string, or unparseable.
+    #
+    # Filter C – no UI keyword anywhere in the row.
+    #   Checks a concatenated string of ALL cell values so keywords buried
+    #   in any column (not just ddo_code) are caught.
+    # ------------------------------------------------------------------
+    before_filter = len(df)
+
+    # Filter A: valid numeric amount
+    if "amount" in df.columns:
+        df = df[df["amount"].notna() & (df["amount"] != 0.0)]
+        df.reset_index(drop=True, inplace=True)
+        logger.debug(
+            "[TRANSFORMER] After amount filter: %d rows remain (dropped %d).",
+            len(df), before_filter - len(df),
+        )
+
+    # Filter B: valid (non-NaT) payment date
+    if "payment_date" in df.columns:
+        before_b = len(df)
+        df = df[df["payment_date"].notna()]
+        df.reset_index(drop=True, inplace=True)
+        logger.debug(
+            "[TRANSFORMER] After date filter: %d rows remain (dropped %d).",
+            len(df), before_b - len(df),
+        )
+
+    # Filter C: no UI/chrome keywords present anywhere in the row
+    if not df.empty:
+        before_c = len(df)
+        # Build a single lower-case string from all cells in the row.
+        row_text = df.astype(str).apply(
+            lambda row: " ".join(row.values), axis=1
+        ).str.lower()
+        ui_mask = row_text.apply(
+            lambda text: any(kw in text for kw in _UI_KEYWORDS)
+        )
+        df = df[~ui_mask]
+        df.reset_index(drop=True, inplace=True)
+        logger.debug(
+            "[TRANSFORMER] After UI-keyword filter: %d rows remain (dropped %d).",
+            len(df), before_c - len(df),
+        )
+
+    total_dropped = before_filter - len(df)
+    if total_dropped:
+        logger.info(
+            "[TRANSFORMER] Row filtering removed %d garbage rows; %d data rows remain.",
+            total_dropped, len(df),
+        )
+
+    # ------------------------------------------------------------------
+    # STEP 9 – Remove exact duplicate rows.
     # ------------------------------------------------------------------
     if drop_duplicates:
         before = len(df)
@@ -262,14 +473,18 @@ def normalize(
             logger.info("[TRANSFORMER] Removed %d duplicate rows.", dropped)
 
     # ------------------------------------------------------------------
-    # STEP 9 – Attach metadata sentinel column.
-    # This column stores the engine tag as a Pandas Categorical dtype
-    # (memory-efficient for low-cardinality string columns).
+    # STEP 11 – Enforce strict output schema.
+    #
+    # Keep ONLY the 7 core columns + any optional metadata columns that
+    # actually exist in the DataFrame (year/month if the Supervisor added
+    # them; _extraction_engine which we just attached).
+    #
+    # Any column the portal adds unexpectedly, or any residual junk column
+    # the DOM scraper picked up, is silently discarded here.
     # ------------------------------------------------------------------
-    df[EXTRACTION_ENGINE_COLUMN] = pd.Categorical(
-        [engine_tag] * len(df),
-        categories=["dom", "stream", "unknown"],
-    )
+    allowed_columns = CORE_COLUMNS + METADATA_COLUMNS
+    final_columns = [c for c in allowed_columns if c in df.columns]
+    df = df[final_columns]
 
     logger.info(
         "[TRANSFORMER] Normalisation complete. Final shape: %s (rows × cols).",

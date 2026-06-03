@@ -8,51 +8,57 @@ PURPOSE
 -------
 This module defines every HTTP route in the v1 API surface:
 
-  POST /api/v1/extract          → submit an extraction job, stream Excel back
-  GET  /api/v1/health           → supervisor health check (used by load balancer)
-  GET  /api/v1/docs/schema      → return the OpenAPI schema fragment for this route
+  POST /api/v1/extract              → submit a multi-year extraction job;
+                                       streams live SSE progress events
+  GET  /api/v1/download/{session_id}→ fetch the compiled .xlsx after "complete"
+  GET  /api/v1/health               → supervisor health check
 
-STREAMING RESPONSE — WHY? (For algoRoute)
-──────────────────────────────────────────
-A normal FastAPI response builds the ENTIRE response body in RAM, then
-sends it in one shot.  For a 12-month extraction that might be a 5 MB
-Excel file:
+ARCHITECTURAL UPGRADE — SSE + FILE HANDOFF
+────────────────────────────────────────────
+Previous design: POST /extract → long-poll → binary .xlsx response
+New design:
+  1. POST /extract opens a text/event-stream.  JSON events flow back live
+     as the Supervisor works through each (year, month) pair.
+  2. When done, a "complete" event carries a download URL:
+       {"type":"complete", "url":"/api/v1/download/<session_id>"}
+  3. GET /download/<session_id> returns the .xlsx binary from an in-memory
+     store (keyed by session_id, TTL-expired by the reaper).
 
-  Normal response:  build 5 MB in RAM → send all at once → done
-  Problem:          every concurrent request holds 5 MB in RAM simultaneously
-                    → 10 concurrent users = 50 MB just for response buffers
+Since binary data cannot be mixed into a text/event-stream, the file
+handoff is separated onto its own endpoint.
 
-  StreamingResponse: generate the file in CHUNKS → send each chunk → discard
-  Benefit:          only one chunk (~64 KB) is in RAM per response at a time
-                    regardless of file size or concurrency
+SSE EVENT TYPES
+────────────────
+  {"type":"status", "year":2024, "month":4,  "status":"processing"}
+  {"type":"status", "year":2024, "month":4,  "status":"success"}
+  {"type":"status", "year":2024, "month":4,  "status":"no_data"}
+  {"type":"status", "year":2024, "month":4,  "status":"error", "message":"..."}
+  {"type":"complete", "url":"/api/v1/download/<session_id>"}
 
-We implement streaming by:
-  1. Writing the DataFrame to an in-memory BytesIO buffer as .xlsx
-  2. Yielding the buffer's bytes in chunks inside an async generator
-  3. Passing that generator to FastAPI's StreamingResponse
-
-The client receives a proper Excel file with a Content-Disposition header
-that triggers the browser's "Save As" dialog.
-
-HTTP STATUS CODES FOR algoRoute
-─────────────────────────────────
-  200 OK                    → job completed, Excel file in body
-  422 Unprocessable Entity  → request body failed Pydantic or canonicalization
-  413 Payload Too Large     → body exceeds MAX_PAYLOAD_SIZE_BYTES
-  429 Too Many Requests     → job queue is full (QueueSaturatedError)
-  503 Service Unavailable   → circuit breaker open (SupervisorUnhealthyError)
-  500 Internal Server Error → unexpected exception (logged, sanitized message)
+MULTI-YEAR PAYLOAD
+────────────────────
+Request body now accepts:
+  {
+    "ifsc_code": "SBIN0000377",
+    "account_number": "10554356145",
+    "years_config": [
+      {"year": 2024, "months": [4, 5, 12]},
+      {"year": 2025, "months": [1, 2, 3]}
+    ]
+  }
 """
 
 import asyncio
 import io
+import json
 import logging
+import time
 import uuid
 from typing import AsyncGenerator
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from src.api.deps import (
@@ -62,7 +68,7 @@ from src.api.deps import (
 )
 from src.automation.supervisor import (
     AutomationSupervisor,
-    ExtractionJob,
+    ExtractionJobMultiYear,
     QueueSaturatedError,
     SupervisorUnhealthyError,
 )
@@ -73,6 +79,32 @@ from src.core.policies.extraction import (
 )
 from src.core.policies.system import MAX_QUEUE_WAIT_SECONDS
 from src.core.security import CanonicalizeError, canonicalize_account_number, canonicalize_ifsc
+
+# ---------------------------------------------------------------------------
+# IN-MEMORY DOWNLOAD STORE
+# ---------------------------------------------------------------------------
+# Maps session_id → {"bytes": <xlsx bytes>, "filename": str, "created_at": float}
+# The TTL reaper in the Supervisor cleans up checkpoint files; here we apply
+# our own lightweight expiry on GET /download so memory doesn't grow unbounded.
+# TTL is intentionally generous (30 minutes) so the client has time to retry.
+_DOWNLOAD_STORE: dict[str, dict] = {}
+_DOWNLOAD_TTL_SECONDS: int = 1800   # 30 minutes
+
+
+def _store_download(session_id: str, xlsx_bytes: bytes, filename: str) -> None:
+    """Persist the compiled .xlsx bytes in the in-memory store."""
+    # Prune expired entries on every write to prevent unbounded growth.
+    now = time.time()
+    expired = [k for k, v in _DOWNLOAD_STORE.items()
+               if now - v["created_at"] > _DOWNLOAD_TTL_SECONDS]
+    for k in expired:
+        del _DOWNLOAD_STORE[k]
+
+    _DOWNLOAD_STORE[session_id] = {
+        "bytes":      xlsx_bytes,
+        "filename":   filename,
+        "created_at": now,
+    }
 
 logger = logging.getLogger(__name__)
 
@@ -85,22 +117,57 @@ router = APIRouter(tags=["extraction"])
 # REQUEST / RESPONSE MODELS  (Pydantic)
 # ──────────────────────────────────────────────────────────────────────────────
 
+class YearConfig(BaseModel):
+    """
+    A single year + month-list pairing inside the multi-year payload.
+
+    Example: {"year": 2024, "months": [4, 5, 6]}
+    """
+    year   : int = Field(
+        ...,
+        ge=MIN_FISCAL_YEAR,
+        le=MAX_FISCAL_YEAR,
+        description=f"Fiscal year ({MIN_FISCAL_YEAR}–{MAX_FISCAL_YEAR})",
+    )
+    months : list[int] = Field(
+        default=list(range(1, 13)),
+        description="1-based month numbers for this year",
+    )
+
+    @field_validator("months")
+    @classmethod
+    def validate_months(cls, v: list[int]) -> list[int]:
+        if not v:
+            raise ValueError("At least one month must be specified per year.")
+        if len(v) > MAX_MONTHS_PER_JOB:
+            raise ValueError(
+                f"Too many months requested ({len(v)}); "
+                f"maximum is {MAX_MONTHS_PER_JOB}."
+            )
+        for m in v:
+            if not (1 <= m <= 12):
+                raise ValueError(f"Month {m} is out of range (1–12).")
+        return sorted(set(v))
+
+
 class ExtractionRequest(BaseModel):
     """
-    Pydantic model for the POST /extract request body.
+    Multi-year extraction request body.
 
-    PYDANTIC FOR algoRoute
-    ────────────────────────
-    Pydantic automatically:
-      • Parses the JSON body into typed Python objects.
-      • Validates field types and constraints (min/max values, regex).
-      • Returns a detailed 422 error if anything is invalid — no manual
-        if-statements needed.
+    Replaces the old single-year  year: int + months: list[int]  schema.
+    The new `years_config` field carries an array of year-month clusters
+    so a single request can span multiple financial years.
 
-    The `@field_validator` decorator lets us add custom logic (e.g.,
-    canonicalization) that runs AFTER type validation.
+    Example payload:
+      {
+        "ifsc_code": "SBIN0000377",
+        "account_number": "10554356145",
+        "years_config": [
+          {"year": 2024, "months": [4, 5, 12]},
+          {"year": 2025, "months": [1, 2, 3]}
+        ]
+      }
     """
-
     ifsc_code      : str = Field(
         ...,
         description="Bank branch IFSC code (e.g. SBIN0001234)",
@@ -111,17 +178,10 @@ class ExtractionRequest(BaseModel):
         description="Bank account number (9–18 digits)",
         examples=["123456789012"],
     )
-    year           : int = Field(
+    years_config   : list[YearConfig] = Field(
         ...,
-        ge=MIN_FISCAL_YEAR,
-        le=MAX_FISCAL_YEAR,
-        description=f"Fiscal year ({MIN_FISCAL_YEAR}–{MAX_FISCAL_YEAR})",
-        examples=[2024],
-    )
-    months         : list[int] = Field(
-        default=list(range(1, 13)),
-        description="List of 1-based month numbers to extract (1=April in Indian fiscal)",
-        examples=[[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]],
+        description="Array of year+month clusters to extract",
+        min_length=1,
     )
 
     @field_validator("ifsc_code")
@@ -142,21 +202,16 @@ class ExtractionRequest(BaseModel):
         except CanonicalizeError as exc:
             raise ValueError(str(exc)) from exc
 
-    @field_validator("months")
+    @field_validator("years_config")
     @classmethod
-    def validate_months(cls, v: list[int]) -> list[int]:
-        """Ensure each month is in range 1–12 and the list is not too long."""
+    def validate_years_config(cls, v: list[YearConfig]) -> list[YearConfig]:
         if not v:
-            raise ValueError("At least one month must be specified.")
-        if len(v) > MAX_MONTHS_PER_JOB:
-            raise ValueError(
-                f"Too many months requested ({len(v)}); "
-                f"maximum is {MAX_MONTHS_PER_JOB}."
-            )
-        for m in v:
-            if not (1 <= m <= 12):
-                raise ValueError(f"Month {m} is out of range (1–12).")
-        return sorted(set(v))   # deduplicate and sort
+            raise ValueError("At least one year configuration must be provided.")
+        # Deduplicate years (keep last occurrence wins for months).
+        seen: dict[int, YearConfig] = {}
+        for yc in v:
+            seen[yc.year] = yc
+        return list(seen.values())
 
 
 class HealthResponse(BaseModel):
@@ -171,178 +226,223 @@ class HealthResponse(BaseModel):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# POST /extract
+# POST /extract  →  SSE live progress stream
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.post(
     "/extract",
-    summary="Submit an extraction job and receive results as an Excel file",
-    response_description="Excel (.xlsx) file streamed chunk by chunk",
+    summary="Submit a multi-year extraction job; receive live SSE progress events",
+    response_description="text/event-stream of JSON status events, ending with a download URL",
     responses={
-        200: {"content": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}}},
+        200: {"content": {"text/event-stream": {}}},
         413: {"description": "Request body too large"},
-        422: {"description": "Validation error (invalid IFSC, account, year, or months)"},
-        429: {"description": "Job queue is full — retry after a short wait"},
-        503: {"description": "Automation Supervisor is unhealthy (circuit breaker open)"},
+        422: {"description": "Validation error"},
+        429: {"description": "Job queue is full"},
+        503: {"description": "Supervisor circuit breaker open"},
     },
 )
 async def submit_extraction(
-    request         : Request,
-    body            : ExtractionRequest,
-    # Dependencies run in declaration order before the handler body executes.
-    _size           : None   = Depends(enforce_payload_size),
-    # resolve_idempotency_hmac accepts any client UUID from the
-    # X-Idempotency-Key header, then returns the SERVER-COMPUTED HMAC of
-    # the canonical payload.  This HMAC is used to tag the ExtractionJob
-    # for deduplication in the Supervisor queue.
-    dedup_key       : str    = Depends(resolve_idempotency_hmac),
-    supervisor      : AutomationSupervisor = Depends(get_supervisor),
+    request    : Request,
+    body       : ExtractionRequest,
+    _size      : None = Depends(enforce_payload_size),
+    dedup_key  : str  = Depends(resolve_idempotency_hmac),
+    supervisor : AutomationSupervisor = Depends(get_supervisor),
 ) -> StreamingResponse:
     """
-    Core endpoint.  Flow:
+    SSE-based extraction endpoint.
 
-      1. Pydantic validates + canonicalizes the body.
-      2. enforce_payload_size checks Content-Length.
-      3. resolve_idempotency_hmac accepts the client UUID and returns the
-         server-computed HMAC for internal deduplication.
-      4. An ExtractionJob is created (tagged with the server HMAC as its
-         task_id prefix) and submitted to the Supervisor queue.
-      5. The handler `await`s the job's result Future.
-      6. The resulting DataFrame is serialized to .xlsx in memory.
-      7. A StreamingResponse yields the bytes in chunks to the client.
+    Flow:
+      1. Validate + canonicalize the multi-year body.
+      2. Create an asyncio.Queue used by the Supervisor to push per-month
+         status events back to this handler.
+      3. Submit an ExtractionJobMultiYear to the Supervisor.
+      4. Yield SSE events from the queue until the Supervisor pushes a
+         sentinel (None) signalling job completion.
+      5. Serialize the final DataFrame to .xlsx, store it in _DOWNLOAD_STORE
+         keyed by session_id, then emit a "complete" event with the URL.
+
+    SSE FORMAT (per the HTML spec):
+        data: {"type": "status", ...}\n\n
+    Each message is a single `data:` line followed by a blank line.
     """
-    task_id = f"req-{uuid.uuid4().hex[:10]}"
+    task_id    = f"req-{uuid.uuid4().hex[:10]}"
+    session_id = uuid.uuid4().hex
+    years_summary = [(yc.year, yc.months) for yc in body.years_config]
+
     logger.info(
-        "[ENDPOINT] POST /extract  task_id=%s  dedup_key=%s…  ifsc=%s  year=%s  months=%s",
-        task_id, dedup_key[:12], body.ifsc_code, body.year, body.months,
+        "[ENDPOINT] POST /extract (SSE)  task_id=%s  ifsc=%s  years=%s",
+        task_id, body.ifsc_code, years_summary,
     )
 
     # ------------------------------------------------------------------
-    # Create the asyncio.Future the Supervisor will resolve when done.
-    # The route handler awaits this Future; the Supervisor puts the result
-    # (or exception) into it from the worker loop.
+    # The progress_queue is the real-time pipe between the Supervisor's
+    # worker loop and this streaming generator.
+    #
+    # Supervisor pushes:  dict event   → one SSE event is emitted
+    #                     None         → sentinel; loop exits
     # ------------------------------------------------------------------
+    progress_queue: asyncio.Queue = asyncio.Queue()
+
     loop   = asyncio.get_event_loop()
     future : asyncio.Future = loop.create_future()
 
-    job = ExtractionJob(
-        task_id       = task_id,
-        ifsc          = body.ifsc_code,
-        account_no    = body.account_number,
-        year          = body.year,
-        months        = body.months,
-        result_future = future,
+    job = ExtractionJobMultiYear(
+        task_id        = task_id,
+        ifsc           = body.ifsc_code,
+        account_no     = body.account_number,
+        years_config   = [(yc.year, yc.months) for yc in body.years_config],
+        result_future  = future,
+        progress_queue = progress_queue,
     )
 
-    # ------------------------------------------------------------------
-    # Submit to the Supervisor queue — this is the IPC boundary.
-    # QueueSaturatedError → 429.  SupervisorUnhealthyError → 503.
-    # ------------------------------------------------------------------
     try:
         await supervisor.submit(job)
     except QueueSaturatedError as exc:
         logger.warning("[ENDPOINT] Queue saturated for task %s: %s", task_id, exc)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=(
-                "The extraction queue is currently full. "
-                "Please retry in a few seconds."
-            ),
+            detail="The extraction queue is currently full. Please retry in a few seconds.",
             headers={"Retry-After": str(MAX_QUEUE_WAIT_SECONDS)},
         )
     except SupervisorUnhealthyError as exc:
         logger.error("[ENDPOINT] Supervisor unhealthy for task %s: %s", task_id, exc)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "The automation service is currently unavailable. "
-                "Our team has been notified. Please retry later."
-            ),
+            detail="The automation service is currently unavailable. Please retry later.",
         )
 
-    # ------------------------------------------------------------------
-    # Await the Future while also watching for client disconnects and a
-    # server-side timeout. If the browser tab closes, cancel the Future so
-    # queued work can be skipped and completed work is not retained.
-    # ------------------------------------------------------------------
-    try:
-        async def _check_disconnect() -> bool:
-            while True:
+    async def _sse_generator() -> AsyncGenerator[str, None]:
+        """
+        Async generator that reads from progress_queue and yields SSE events.
+
+        SSE WIRE FORMAT
+        ────────────────
+        Each SSE "message" is: data: <payload>\n\n
+        The double-newline terminates the message; the browser's EventSource
+        parser splits on it to deliver individual events.
+        """
+        nonlocal future
+
+        while True:
+            # Poll the queue with a timeout so we also notice client disconnects.
+            try:
+                event = await asyncio.wait_for(progress_queue.get(), timeout=2.0)
+            except asyncio.TimeoutError:
+                # Check if the client has dropped the connection.
                 if await request.is_disconnected():
-                    return True
-                await asyncio.sleep(2.0)
+                    logger.warning(
+                        "[ENDPOINT] SSE client disconnected; cancelling job %s.", task_id
+                    )
+                    future.cancel()
+                    return
+                # Send a keep-alive comment so the TCP connection doesn't
+                # time out on proxies / load-balancers.
+                yield ": keep-alive\n\n"
+                continue
 
-        disconnect_task = asyncio.create_task(
-            _check_disconnect(), name=f"{task_id}-disconnect-watch"
-        )
-        timeout_task = asyncio.create_task(
-            asyncio.sleep(float(MAX_QUEUE_WAIT_SECONDS) + 3600.0),
-            name=f"{task_id}-timeout",
-        )
+            # None is the sentinel pushed by the Supervisor when the job ends.
+            if event is None:
+                break
 
-        done, pending = await asyncio.wait(
-            {future, disconnect_task, timeout_task},
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+            yield f"data: {json.dumps(event)}\n\n"
 
-        for task in pending:
-            task.cancel()
-
-        if future in done:
-            result_df: pd.DataFrame = future.result()
-        elif disconnect_task in done:
-            future.cancel()
-            logger.warning("[ENDPOINT] Client disconnected. Aborting job %s.", task_id)
-            raise HTTPException(
-                status_code=499,
-                detail="Client Closed Request",
+        # ------------------------------------------------------------------
+        # All months done — await the final DataFrame from the Future.
+        # ------------------------------------------------------------------
+        try:
+            result_df: pd.DataFrame = await asyncio.wait_for(
+                future, timeout=60.0
             )
-        elif timeout_task in done:
-            future.cancel()
-            logger.error("[ENDPOINT] Task %s timed out waiting for Supervisor result.", task_id)
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Extraction timed out. Please retry.",
-            )
-    except asyncio.TimeoutError:
-        logger.error("[ENDPOINT] Task %s timed out waiting for Supervisor result.", task_id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Extraction timed out. Please retry.",
-        )
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("[ENDPOINT] Task %s failed in Supervisor: %s", task_id, exc)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Extraction failed due to an internal error. Please retry.",
+        except asyncio.TimeoutError:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Timed out awaiting final result.'})}\n\n"
+            return
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+            return
+
+        if result_df is None or result_df.empty:
+            yield f"data: {json.dumps({'type': 'complete', 'url': None, 'rows': 0, 'message': 'No data found for the requested period.'})}\n\n"
+            return
+
+        # Serialize to .xlsx on a background thread.
+        def _write_excel() -> bytes:
+            buf = io.BytesIO()
+            result_df.to_excel(buf, index=False, engine="openpyxl")
+            return buf.getvalue()
+
+        xlsx_bytes = await asyncio.to_thread(_write_excel)
+
+        # Derive filename from the years in the config.
+        year_tags = "_".join(str(yc.year) for yc in body.years_config)
+        filename  = f"treasury_{body.ifsc_code}_{year_tags}.xlsx"
+
+        _store_download(session_id, xlsx_bytes, filename)
+        logger.info(
+            "[ENDPOINT] Task %s stored %d bytes under session_id=%s.",
+            task_id, len(xlsx_bytes), session_id,
         )
 
-    # ------------------------------------------------------------------
-    # Serialize the DataFrame to Excel in memory (never touches disk).
-    # StreamingResponse sends the buffer in chunks, keeping memory low.
-    # ------------------------------------------------------------------
-    if result_df is None or result_df.empty:
+        yield f"data: {json.dumps({'type': 'complete', 'url': f'/api/v1/download/{session_id}', 'rows': len(result_df)})}\n\n"
+
+    return StreamingResponse(
+        content    = _sse_generator(),
+        media_type = "text/event-stream",
+        headers    = {
+            "Cache-Control"               : "no-cache",
+            "X-Accel-Buffering"           : "no",   # disable nginx buffering
+            "Access-Control-Allow-Origin" : "*",
+            "X-Task-Id"                   : task_id,
+        },
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GET /download/{session_id}  →  fetch the compiled .xlsx after "complete"
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get(
+    "/download/{session_id}",
+    summary="Fetch the compiled .xlsx after a completed extraction job",
+    responses={
+        200: {"content": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}}},
+        404: {"description": "Session not found or already expired"},
+    },
+)
+async def download_result(session_id: str) -> Response:
+    """
+    One-shot file download endpoint.
+
+    The client calls this after receiving the ``complete`` SSE event.
+    The .xlsx bytes are served from _DOWNLOAD_STORE (in-memory).  The
+    entry expires after _DOWNLOAD_TTL_SECONDS (30 min) and is pruned
+    on the next write to _DOWNLOAD_STORE.
+    """
+    entry = _DOWNLOAD_STORE.get(session_id)
+    if entry is None:
         raise HTTPException(
-            status_code=status.HTTP_204_NO_CONTENT,
-            detail="Extraction returned no data for the requested parameters.",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Download session not found or has expired. Please re-run the extraction.",
+        )
+
+    # Check TTL.
+    if time.time() - entry["created_at"] > _DOWNLOAD_TTL_SECONDS:
+        del _DOWNLOAD_STORE[session_id]
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Download session has expired. Please re-run the extraction.",
         )
 
     logger.info(
-        "[ENDPOINT] Task %s completed: %d rows.  Streaming Excel response.",
-        task_id, len(result_df),
+        "[ENDPOINT] GET /download/%s  → %d bytes  filename=%s",
+        session_id, len(entry["bytes"]), entry["filename"],
     )
 
-    filename = f"treasury_{body.ifsc_code}_{body.year}.xlsx"
-
-    return StreamingResponse(
-        content    = _excel_stream_generator(result_df),
-        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers    = {
-            "Content-Disposition" : f'attachment; filename="{filename}"',
-            "X-Task-Id"           : task_id,
-            "X-Row-Count"         : str(len(result_df)),
+    return Response(
+        content      = entry["bytes"],
+        media_type   = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers      = {
+            "Content-Disposition": f'attachment; filename="{entry["filename"]}"',
+            "Content-Length":      str(len(entry["bytes"])),
         },
     )
 
@@ -390,48 +490,23 @@ async def health_check(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# STREAMING HELPER
+# NOTE: _excel_stream_generator is no longer used for the primary /extract
+# flow (which now uses SSE + /download).  It is retained here for any
+# tooling or tests that may reference it directly.
 # ──────────────────────────────────────────────────────────────────────────────
 
 async def _excel_stream_generator(
     df: pd.DataFrame,
-    chunk_size: int = 8_192,   # 8 KB per chunk
+    chunk_size: int = 8_192,
 ) -> AsyncGenerator[bytes, None]:
-    """
-    Async generator that writes the DataFrame to .xlsx in memory on a
-    background thread, then yields its bytes in fixed-size chunks.
-
-    HOW AsyncGenerator WORKS (For algoRoute)
-    ──────────────────────────────────────────
-    An `async def` function that contains `yield` is an ASYNC GENERATOR.
-    The caller (StreamingResponse) calls `async for chunk in generator():`
-    which:
-      1. Resumes the generator until it hits `yield chunk`.
-      2. Sends `chunk` to the HTTP client.
-      3. The loop repeats until the generator is exhausted (falls off the end).
-
-    This is fundamentally different from building the whole response first:
-    the generator and the HTTP sender run in alternating turns on the event
-    loop — no large buffer needed.
-
-    OPENPYXL ENGINE NOTE (For algoRoute)
-    ──────────────────────────────────────
-    `df.to_excel(buffer, engine="openpyxl")` writes a real .xlsx file
-    (a ZIP archive of XML files under the hood) into the BytesIO buffer.
-    We seek back to the start and repeatedly read small chunks so we do
-    not create a second full-size bytes copy with `buffer.getvalue()`.
-    """
+    """Legacy helper — yields .xlsx bytes in chunks from a DataFrame."""
     def _write_excel_sync() -> io.BytesIO:
         buf = io.BytesIO()
         df.to_excel(buf, index=False, engine="openpyxl")
         buf.seek(0)
         return buf
 
-    logger.debug("Offloading Excel generation to background thread...")
     stream: io.BytesIO = await asyncio.to_thread(_write_excel_sync)
-
     while chunk := stream.read(chunk_size):
         yield chunk
-        # `await asyncio.sleep(0)` yields control to the event loop between
-        # chunks so other coroutines (health checks, new requests) can run.
         await asyncio.sleep(0)

@@ -500,13 +500,26 @@ class AutomationSupervisor:
                     )
                     continue
 
-                month_df = await self._extract_month_with_retry(
-                    task_state=task_state,
-                    ifsc=job.ifsc,
-                    account_no=job.account_no,
-                    year=job.year,
-                    month=month,
-                )
+                try:
+                    month_df = await self._extract_month_with_retry(
+                        task_state=task_state,
+                        ifsc=job.ifsc,
+                        account_no=job.account_no,
+                        year=job.year,
+                        month=month,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "[SUPERVISOR] Month %02d failed permanently: %s. "
+                        "Skipping to save existing data.",
+                        month, exc,
+                    )
+                    task_state.current_workflow_state = WorkflowState.INIT
+                    continue
+
+                if not month_df.empty:
+                    month_df.insert(0, "Year", job.year)
+                    month_df.insert(1, "Month", month)
 
                 # Merge this month's data into the running total.
                 cumulative_df = _append_month(cumulative_df, month_df)
@@ -515,8 +528,13 @@ class AutomationSupervisor:
                 if not cumulative_df.empty:
                     checkpoint_save(task_state, cumulative_df, month=month)
                     task_state.advance_state(WorkflowState.CHECKPOINT_SAVED)
-                    # Reset state machine to NAVIGATED ready for the next month.
-                    task_state.current_workflow_state = WorkflowState.NAVIGATED
+                    # Reset state machine to INIT so the next month's attempt
+                    # loop starts cleanly from INIT → BROWSER_READY → …
+                    # Using direct assignment here (not advance_state) because
+                    # CHECKPOINT_SAVED → INIT is a deliberate cyclic reset, not
+                    # a normal forward transition.  VALID_TRANSITIONS allows it
+                    # via the CHECKPOINT_SAVED → INIT entry added in workflow_state.py.
+                    task_state.current_workflow_state = WorkflowState.INIT
 
             logger.info(
                 "[SUPERVISOR] Job %s complete.  Total rows: %d",
@@ -582,6 +600,17 @@ class AutomationSupervisor:
                     month, attempt, MAX_MONTH_RETRIES,
                 )
 
+                # ── RESET: Ensure every attempt begins from a clean INIT state.
+                # This guards against two failure modes:
+                #   1. The first attempt for a month after CHECKPOINT_SAVED left
+                #      the state at INIT (correct) but a prior partial attempt
+                #      may have advanced it partway through the graph.
+                #   2. The except-block below resets to INIT, but if an exception
+                #      is raised before that block runs, state would be dirty.
+                # Direct assignment is intentional — we are not transitioning
+                # forward, we are unconditionally resetting the per-attempt state.
+                task_state.current_workflow_state = WorkflowState.INIT
+
                 # ── STEP A: Run DOM engine (timeout guard) ──
                 task_state.advance_state(WorkflowState.BROWSER_READY)
                 task_state.advance_state(WorkflowState.NAVIGATED)
@@ -595,7 +624,7 @@ class AutomationSupervisor:
                             account_no=account_no,
                             year=year,
                             month=month,
-                            headless=False,
+                            headless=True,
                         ),
                         timeout=EXTRACTION_TIMEOUT_SECONDS,
                     )
@@ -606,6 +635,14 @@ class AutomationSupervisor:
                         f"DOM extraction timed out after {EXTRACTION_TIMEOUT_SECONDS}s "
                         f"for month {month}."
                     )
+
+                if not dom_rows:
+                    logger.info(
+                        "[SUPERVISOR] Month %02d has no data. Skipping heuristics.",
+                        month,
+                    )
+                    task_state.advance_state(WorkflowState.EXTRACTION_COMPLETE)
+                    return pd.DataFrame()
 
                 # ── STEP B: Normalise DOM rows ──
                 dom_df = normalize(dom_rows, engine_tag="dom")
@@ -644,7 +681,7 @@ class AutomationSupervisor:
                                 account_no=account_no,
                                 year=year,
                                 month=month,
-                                headless=False,
+                                headless=True,
                                 prefer_stream=True,
                             ),
                             timeout=EXTRACTION_TIMEOUT_SECONDS,
@@ -677,6 +714,7 @@ class AutomationSupervisor:
                 )
 
                 # Reset state machine to INIT for the retry.
+                # (Direct assignment — same intentional cyclic reset as above.)
                 task_state.current_workflow_state = WorkflowState.INIT
 
                 if attempt < MAX_MONTH_RETRIES:
