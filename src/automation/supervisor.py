@@ -91,11 +91,18 @@ without requiring a separate thread or process.
 
 import asyncio
 import logging
+import sys
 import time
 import traceback
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Optional
+
+# Windows: enforce ProactorEventLoop before any asyncio usage.
+# This is a belt-and-suspenders guard for when the supervisor module is
+# imported in a subprocess context where main.py's policy hasn't propagated.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 import pandas as pd
 
@@ -588,7 +595,7 @@ class AutomationSupervisor:
                             account_no=account_no,
                             year=year,
                             month=month,
-                            headless=True,
+                            headless=False,
                         ),
                         timeout=EXTRACTION_TIMEOUT_SECONDS,
                     )
@@ -637,7 +644,7 @@ class AutomationSupervisor:
                                 account_no=account_no,
                                 year=year,
                                 month=month,
-                                headless=True,
+                                headless=False,
                                 prefer_stream=True,
                             ),
                             timeout=EXTRACTION_TIMEOUT_SECONDS,

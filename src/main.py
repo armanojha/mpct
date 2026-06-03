@@ -43,7 +43,12 @@ Think of it as:  __init__ and __del__ for the entire web application.
 
 import logging
 import os
+import sys
+import asyncio
 from contextlib import asynccontextmanager
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -87,8 +92,22 @@ async def lifespan(app: FastAPI):
     The code BEFORE `yield` is the __enter__ phase (startup).
     The code AFTER  `yield` is the __exit__ phase (shutdown).
     The `yield` itself is where FastAPI serves requests.
+
+    WINDOWS PROACTOR FIX (For algoRoute)
+    ──────────────────────────────────────
+    We re-assert the ProactorEventLoop policy HERE, inside the already-running
+    event loop, as a final guard.  Uvicorn (especially with --reload) uses a
+    watchdog that re-imports application modules in a child process; the policy
+    set at module top-level may not have been applied before Uvicorn started its
+    own loop.  Calling set_event_loop_policy() inside the lifespan guarantees
+    that any subprocess Playwright spawns from this point forward (i.e. Chromium)
+    will inherit a Proactor-compatible environment.
     """
     # ── STARTUP ──────────────────────────────────────────────────────────
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+        logger.info("[LIFESPAN] WindowsProactorEventLoopPolicy enforced inside lifespan.")
+
     logger.info("=== MPCT-AP API Gateway starting up ===")
     logger.info("MAX_PAYLOAD_SIZE: %d bytes", MAX_PAYLOAD_SIZE_BYTES)
 
@@ -206,11 +225,22 @@ async def root_health_probe():
 if __name__ == "__main__":
     import uvicorn
 
+    # CRITICAL (Windows): The ProactorEventLoop policy MUST be set before
+    # uvicorn.run() creates any event loop.  This __main__ block runs in the
+    # main process, so setting it here guarantees the correct loop type is
+    # active for the lifetime of the server.
+    #
+    # reload=False is MANDATORY on Windows.  The Uvicorn reloader forks a
+    # watchdog child process that creates its own SelectorEventLoop BEFORE
+    # our policy line runs, which is exactly the race condition that caused
+    # the original NotImplementedError.  Use the start_server.py launcher
+    # (or set UVICORN_RELOAD=false) for development hot-reloading instead.
     uvicorn.run(
         "src.main:app",
-        host    = "0.0.0.0",
-        port    = int(os.getenv("PORT", "8000")),
-        reload  = True,   # auto-reload on file changes (dev only)
-        workers = 1,      # MUST be 1 — see docstring above
+        host      = "0.0.0.0",
+        port      = int(os.getenv("PORT", "8000")),
+        reload    = False,   # MUST be False on Windows — see comment above
+        workers   = 1,       # MUST be 1 — see module docstring
+        loop      = "asyncio",  # explicitly select asyncio (Proactor) loop
         log_level = os.getenv("LOG_LEVEL", "info").lower(),
     )

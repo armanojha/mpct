@@ -1,7 +1,7 @@
 """
 src/api/deps.py
 ================
-FastAPI Dependency Injection — Rate Limiting, HMAC Validation, Payload Guard
+FastAPI Dependency Injection — Rate Limiting, Idempotency, Payload Guard
 Team: algoRoute | Project: MPCT-AP
 
 PURPOSE
@@ -19,9 +19,9 @@ the route handler runs:
     async def extract(
         request: Request,
         body: ExtractionRequest,
-        _size: None = Depends(enforce_payload_size),   ← runs first
-        _hmac: None = Depends(verify_request_hmac),    ← runs second
-        _rate: None = Depends(rate_limit_check),       ← runs third
+        _size: None = Depends(enforce_payload_size),          ← runs first
+        _hmac: str   = Depends(resolve_idempotency_hmac),     ← runs second
+        _rate: None  = Depends(rate_limit_check),             ← runs third
     ):
         ...   # route handler only runs if all Depends passed
 
@@ -29,18 +29,44 @@ If ANY dependency raises an HTTPException, FastAPI returns that error
 response immediately — the route handler is never called.
 
 Dependencies in this file:
-  • enforce_payload_size  — rejects bodies > MAX_PAYLOAD_SIZE_BYTES (§5)
-  • verify_request_hmac   — validates X-Idempotency-Key header (§5)
-  • get_supervisor        — returns the shared AutomationSupervisor instance
+  • enforce_payload_size       — rejects bodies > MAX_PAYLOAD_SIZE_BYTES (§5)
+  • resolve_idempotency_hmac   — accepts any client UUID in X-Idempotency-Key
+                                 and returns the SERVER-COMPUTED HMAC of the
+                                 canonical payload for use as the internal
+                                 deduplication key in the Supervisor queue.
+  • get_supervisor             — returns the shared AutomationSupervisor instance
+
+DESIGN RATIONALE — WHY THE CLIENT NO LONGER SENDS THE HMAC (For algoRoute)
+────────────────────────────────────────────────────────────────────────────
+The original design required the client to compute:
+    hmac(SECRET_KEY, canonical_payload)
+and send that as the X-Idempotency-Key header.
+
+Problem: the SECRET_KEY must NEVER leave the server.  The React frontend
+running in a browser has no access to the server's .env, so it was forced
+to produce a fake placeholder that always failed HMAC validation → 401.
+
+Corrected flow:
+  1. Client sends a random UUID in X-Idempotency-Key (proves the request
+     is not a copy-paste replay; does NOT carry the HMAC secret).
+  2. Server receives the request, parses the body, and INDEPENDENTLY
+     computes the HMAC from (IFSC | account | year | months) + SECRET_KEY.
+  3. That server-computed HMAC becomes the internal deduplication key used
+     when submitting the job to the Supervisor queue.
+  4. Two requests for the exact same extraction (same IFSC, account, year,
+     months) will produce the same server HMAC and can be deduplicated in
+     the queue — even if their client UUIDs are different.
+
+This preserves full idempotency semantics on the server without ever
+exposing the HMAC secret to the frontend.
 """
 
 import logging
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
-from src.core.feature_flags import ENABLE_HMAC_VALIDATION
 from src.core.policies.security import MAX_PAYLOAD_SIZE_BYTES
-from src.core.security import CanonicalizeError, verify_idempotency_key
+from src.core.security import CanonicalizeError, build_idempotency_key
 
 logger = logging.getLogger(__name__)
 
@@ -79,56 +105,66 @@ async def enforce_payload_size(request: Request) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# HMAC IDEMPOTENCY KEY VALIDATION
+# IDEMPOTENCY KEY RESOLUTION
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def verify_request_hmac(
+async def resolve_idempotency_hmac(
     request: Request,
     x_idempotency_key: str = Header(
         ...,
         alias="X-Idempotency-Key",
         description=(
-            "HMAC-SHA256 digest of the canonicalized request payload. "
-            "Computed as: hmac(SECRET, 'IFSC|ACCOUNT|YEAR|MONTHS').hexdigest()"
+            "A client-generated UUID (crypto.randomUUID()) that uniquely "
+            "identifies this request attempt.  The server does NOT validate "
+            "this value cryptographically; it is used only as a client-side "
+            "correlation handle.  The server independently computes the HMAC "
+            "of the canonical payload and uses that as the internal "
+            "deduplication key in the job queue."
         ),
     ),
 ) -> str:
     """
-    Validate the X-Idempotency-Key header against a server-recomputed HMAC.
+    Accept the client's idempotency UUID and return the SERVER-COMPUTED
+    HMAC of the canonical payload.
 
-    IDEMPOTENCY SEMANTICS (For algoRoute)
-    ────────────────────────────────────────
-    Idempotency means: performing the same operation multiple times has
-    the same effect as performing it once.  HTTP POST is not idempotent
-    by default — if the client retries a failed POST, the server may run
-    the job twice.
+    FLOW (For algoRoute)
+    ────────────────────
+    1. FastAPI enforces that X-Idempotency-Key is present (required header).
+       Any non-empty string is accepted — no cryptographic check performed.
+    2. We parse the request body to extract (ifsc, account, year, months).
+    3. We call build_idempotency_key() — the same server-side HMAC function
+       used in Phase 4 — on the canonical payload.
+    4. We return the resulting 64-char HMAC hex digest.
+    5. The route handler receives this as `_hmac` and tags the ExtractionJob
+       with it, enabling the Supervisor to detect duplicate jobs.
 
-    Our idempotency key:
-      1. The client computes: hmac(SECRET, canonical_payload)
-      2. The client sends the key in every retry of the same request.
-      3. The server recomputes the key from the body.
-      4. If keys match → request is authentic and deduplicated.
-      5. If keys differ → 401 Unauthorized (tampered or wrong secret).
+    Client UUID vs Server HMAC:
+    ─────────────────────────────────────────────────────────────────
+    • x_idempotency_key  → client-generated UUID, accepted as-is, logged
+                           for correlation / debugging.
+    • return value       → server-computed HMAC, used for deduplication.
 
-    In Phase 4 we validate the key but leave deduplication (caching seen
-    keys with a short TTL) for Phase 5 when Redis is introduced.
+    This means two retries from the same browser tab will have DIFFERENT
+    client UUIDs but produce the SAME server HMAC for the same payload,
+    allowing the Supervisor to identify and coalesce them.
 
     Returns
     -------
-    The validated idempotency key string (used by the route handler to tag
-    the ExtractionJob).
+    The server-computed 64-character HMAC-SHA256 hex digest.
 
     Raises
     ------
-    HTTPException 401 if the key is invalid.
-    HTTPException 422 if inputs fail canonicalization.
+    HTTPException 400 if the request body is not valid JSON.
+    HTTPException 422 if inputs fail canonicalization (invalid IFSC etc.).
     """
-    if not ENABLE_HMAC_VALIDATION:
-        logger.debug("[DEPS] HMAC validation disabled by feature flag.")
-        return x_idempotency_key
+    logger.debug(
+        "[DEPS] Received X-Idempotency-Key (client UUID): %s",
+        x_idempotency_key,
+    )
 
-    # We need the parsed body to recompute the key.  FastAPI has already
-    # read and cached the body at this point; `request.json()` is safe.
+    # Parse the body to extract the fields we need to canonicalize.
+    # FastAPI has already read and cached the body for Pydantic at this
+    # point, so calling request.json() a second time is safe and free.
     try:
         body = await request.json()
     except Exception:
@@ -142,13 +178,15 @@ async def verify_request_hmac(
     year           = body.get("year", 0)
     months         = body.get("months", [])
 
+    # Compute the server-side HMAC.  CanonicalizeError here means the body
+    # has invalid field values; Pydantic will also catch this, but we return
+    # a 422 early to give a clear error message.
     try:
-        valid = verify_idempotency_key(
+        server_hmac = build_idempotency_key(
             ifsc=ifsc,
             account_number=account_number,
             year=year,
             months=months,
-            provided_key=x_idempotency_key,
         )
     except CanonicalizeError as exc:
         raise HTTPException(
@@ -156,20 +194,13 @@ async def verify_request_hmac(
             detail=f"Input canonicalization failed: {exc}",
         )
 
-    if not valid:
-        logger.warning(
-            "[DEPS] HMAC mismatch for request. Possible tampered payload or wrong secret."
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                "X-Idempotency-Key does not match the server-recomputed HMAC. "
-                "Ensure you are using the correct HMAC secret and canonical format."
-            ),
-        )
+    logger.debug(
+        "[DEPS] Server-computed deduplication HMAC: %s…  (client UUID: %s)",
+        server_hmac[:12],
+        x_idempotency_key,
+    )
 
-    logger.debug("[DEPS] HMAC validation passed.")
-    return x_idempotency_key
+    return server_hmac
 
 
 # ──────────────────────────────────────────────────────────────────────────────

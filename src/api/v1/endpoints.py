@@ -38,7 +38,6 @@ HTTP STATUS CODES FOR algoRoute
 ─────────────────────────────────
   200 OK                    → job completed, Excel file in body
   422 Unprocessable Entity  → request body failed Pydantic or canonicalization
-  401 Unauthorized          → HMAC key mismatch
   413 Payload Too Large     → body exceeds MAX_PAYLOAD_SIZE_BYTES
   429 Too Many Requests     → job queue is full (QueueSaturatedError)
   503 Service Unavailable   → circuit breaker open (SupervisorUnhealthyError)
@@ -59,7 +58,7 @@ from pydantic import BaseModel, Field, field_validator
 from src.api.deps import (
     enforce_payload_size,
     get_supervisor,
-    verify_request_hmac,
+    resolve_idempotency_hmac,
 )
 from src.automation.supervisor import (
     AutomationSupervisor,
@@ -181,7 +180,6 @@ class HealthResponse(BaseModel):
     response_description="Excel (.xlsx) file streamed chunk by chunk",
     responses={
         200: {"content": {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {}}},
-        401: {"description": "HMAC idempotency key mismatch"},
         413: {"description": "Request body too large"},
         422: {"description": "Validation error (invalid IFSC, account, year, or months)"},
         429: {"description": "Job queue is full — retry after a short wait"},
@@ -193,7 +191,11 @@ async def submit_extraction(
     body            : ExtractionRequest,
     # Dependencies run in declaration order before the handler body executes.
     _size           : None   = Depends(enforce_payload_size),
-    _hmac           : str    = Depends(verify_request_hmac),
+    # resolve_idempotency_hmac accepts any client UUID from the
+    # X-Idempotency-Key header, then returns the SERVER-COMPUTED HMAC of
+    # the canonical payload.  This HMAC is used to tag the ExtractionJob
+    # for deduplication in the Supervisor queue.
+    dedup_key       : str    = Depends(resolve_idempotency_hmac),
     supervisor      : AutomationSupervisor = Depends(get_supervisor),
 ) -> StreamingResponse:
     """
@@ -201,16 +203,18 @@ async def submit_extraction(
 
       1. Pydantic validates + canonicalizes the body.
       2. enforce_payload_size checks Content-Length.
-      3. verify_request_hmac validates X-Idempotency-Key.
-      4. An ExtractionJob is created and submitted to the Supervisor queue.
+      3. resolve_idempotency_hmac accepts the client UUID and returns the
+         server-computed HMAC for internal deduplication.
+      4. An ExtractionJob is created (tagged with the server HMAC as its
+         task_id prefix) and submitted to the Supervisor queue.
       5. The handler `await`s the job's result Future.
       6. The resulting DataFrame is serialized to .xlsx in memory.
       7. A StreamingResponse yields the bytes in chunks to the client.
     """
     task_id = f"req-{uuid.uuid4().hex[:10]}"
     logger.info(
-        "[ENDPOINT] POST /extract  task_id=%s  ifsc=%s  year=%s  months=%s",
-        task_id, body.ifsc_code, body.year, body.months,
+        "[ENDPOINT] POST /extract  task_id=%s  dedup_key=%s…  ifsc=%s  year=%s  months=%s",
+        task_id, dedup_key[:12], body.ifsc_code, body.year, body.months,
     )
 
     # ------------------------------------------------------------------

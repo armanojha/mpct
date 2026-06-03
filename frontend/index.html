@@ -395,11 +395,12 @@
         const safeIfsc = ifsc.trim().toUpperCase();
         const filename = `treasury_${safeIfsc}_${year}.xlsx`;
 
-        // Build the idempotency key (client-side HMAC would require the secret;
-        // with ENABLE_HMAC_VALIDATION=false in dev the header is still required
-        // by the schema but not verified — we send a placeholder).
-        // In production, replace this with a proper HMAC call or a backend-issued token.
-        const idempotencyKey = `dev-placeholder-${Date.now()}`;
+        // Generate a random UUID as the idempotency key.
+        // The server does NOT validate this cryptographically — it accepts
+        // any well-formed string and uses it only as a client-side correlation
+        // handle.  The server independently computes its own HMAC from the
+        // canonical payload for internal deduplication in the job queue.
+        const idempotencyKey = crypto.randomUUID();
 
         try {
           const response = await fetch(API_ENDPOINT, {
@@ -438,7 +439,7 @@
             return;
           }
 
-          // Other errors (422, 401, 500 …)
+          // Other errors (422, 500 …)
           let detail = `HTTP ${response.status}`;
           try {
             const body = await response.json();

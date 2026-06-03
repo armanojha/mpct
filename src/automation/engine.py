@@ -381,7 +381,7 @@ async def extract_via_excel_stream(
     # `asyncio.get_event_loop()` returns the currently running event loop –
     # the engine that coordinates all our `await` operations.
     # ------------------------------------------------------------------
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     excel_future: asyncio.Future = loop.create_future()
 
     async def _on_response(response: Response) -> None:
