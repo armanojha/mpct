@@ -66,7 +66,13 @@ import logging
 from fastapi import Depends, Header, HTTPException, Request, status
 
 from src.core.policies.security import MAX_PAYLOAD_SIZE_BYTES
-from src.core.security import CanonicalizeError, build_idempotency_key
+from src.core.security import (
+    CanonicalizeError,
+    build_idempotency_key,
+    canonicalize_account_number,
+    canonicalize_ifsc,
+    generate_idempotency_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -173,25 +179,45 @@ async def resolve_idempotency_hmac(
             detail="Request body is not valid JSON.",
         )
 
-    ifsc           = body.get("ifsc_code", "")
-    account_number = body.get("account_number", "")
-    year           = body.get("year", 0)
-    months         = body.get("months", [])
-
-    # Compute the server-side HMAC.  CanonicalizeError here means the body
-    # has invalid field values; Pydantic will also catch this, but we return
-    # a 422 early to give a clear error message.
     try:
-        server_hmac = build_idempotency_key(
-            ifsc=ifsc,
-            account_number=account_number,
-            year=year,
-            months=months,
-        )
+        ifsc = body.get("ifsc_code", "")
+        account_number = body.get("account_number", "")
+        years_config = body.get("years_config")
+
+        if years_config is not None:
+            c_ifsc = canonicalize_ifsc(ifsc)
+            c_account = canonicalize_account_number(account_number)
+            year_parts: list[str] = []
+
+            for item in years_config:
+                year = int(item.get("year", 0))
+                months = item.get("months", [])
+                months_str = ",".join(str(m) for m in sorted(set(months)))
+                year_parts.append(f"{year}:{months_str}")
+
+            canonical_payload = (
+                f"{c_ifsc}|{c_account}|"
+                f"{';'.join(sorted(year_parts))}"
+            )
+            server_hmac = generate_idempotency_key(canonical_payload)
+        else:
+            year = body.get("year", 0)
+            months = body.get("months", [])
+            server_hmac = build_idempotency_key(
+                ifsc=ifsc,
+                account_number=account_number,
+                year=year,
+                months=months,
+            )
     except CanonicalizeError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Input canonicalization failed: {exc}",
+        )
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid idempotency payload: {exc}",
         )
 
     logger.debug(

@@ -364,6 +364,29 @@ async def submit_extraction(
             yield f"data: {json.dumps({'type': 'complete', 'url': None, 'rows': 0, 'message': 'No data found for the requested period.'})}\n\n"
             return
 
+        # Convert numeric month values to short names for the final Excel export.
+        if "month" in result_df.columns:
+            month_names = {
+                1: "Jan",
+                2: "Feb",
+                3: "Mar",
+                4: "Apr",
+                5: "May",
+                6: "Jun",
+                7: "Jul",
+                8: "Aug",
+                9: "Sep",
+                10: "Oct",
+                11: "Nov",
+                12: "Dec",
+            }
+            try:
+                result_df = result_df.copy()
+                result_df["month"] = result_df["month"].astype(int).map(month_names).fillna(result_df["month"])
+            except Exception:
+                # If the month column cannot be converted cleanly, leave it as-is.
+                pass
+
         # Serialize to .xlsx on a background thread.
         def _write_excel() -> bytes:
             buf = io.BytesIO()

@@ -224,6 +224,69 @@
     .btn-submit:hover:not(:disabled) { background: var(--accent-hover); }
     .btn-submit:disabled { opacity: 0.45; cursor: not-allowed; }
 
+    .btn-secondary {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 12px 18px;
+      font-family: var(--font);
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+    }
+    .btn-secondary:hover:not(:disabled) {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(79,110,247,0.08);
+    }
+    .btn-secondary:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .control-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .progress-log {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 12px;
+      padding: 12px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .progress-log-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+    .progress-log-item.success { color: var(--success); }
+    .progress-log-item.error { color: var(--error); }
+    .progress-log-item.processing { color: var(--accent); }
+    .progress-log-key {
+      min-width: 110px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .progress-log-status {
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 0.75rem;
+      color: var(--text-dim);
+    }
+    .progress-log-message {
+      flex: 1;
+      color: var(--text);
+    }
+
     /* Spinner */
     @keyframes spin { to { transform: rotate(360deg); } }
     .spinner {
@@ -321,6 +384,7 @@
       { name: "March",     label: "Mar", value: 3  },
     ];
     const MONTH_BY_VALUE = Object.fromEntries(MONTH_META.map(m => [m.value, m]));
+    const getMonthLabel = (value) => MONTH_BY_VALUE[value]?.label || String(value);
 
     const QUICK_SELECT = [
       { label: "Q1 (Apr–Jun)",  months: [4, 5, 6]  },
@@ -370,21 +434,77 @@
       const [accountNumber, setAccountNumber] = useState("");
       const [year,          setYear]          = useState(CUR_YEAR);
       const [months,        setMonths]        = useState([]);
+      const [yearConfigs,   setYearConfigs]   = useState({});
       const [status,        setStatus]        = useState(STATUS.IDLE);
       const [errorDetail,   setErrorDetail]   = useState("");
       const [activeQuick,   setActiveQuick]   = useState(null);
+      const [progressLogs,  setProgressLogs]  = useState({});
+
+      const selectedYearConfigs = Object.entries(yearConfigs)
+        .filter(([, monthsForYear]) => monthsForYear.length > 0)
+        .map(([yearKey, monthsForYear]) => ({
+          year: Number(yearKey),
+          months: monthsForYear,
+        }));
 
       /* Month toggling */
       const toggleMonth = useCallback((n) => {
         setActiveQuick(null);
-        setMonths(prev =>
-          prev.includes(n) ? prev.filter(m => m !== n) : [...prev, n].sort((a,b)=>a-b)
-        );
-      }, []);
+
+        const nextMonths = months.includes(n)
+          ? months.filter(m => m !== n)
+          : [...months, n].sort((a, b) => a - b);
+
+        setMonths(nextMonths);
+        setYearConfigs(prev => {
+          const next = { ...prev };
+          if (nextMonths.length === 0) {
+            delete next[year];
+          } else {
+            next[year] = nextMonths;
+          }
+          return next;
+        });
+      }, [months, year]);
 
       const applyQuick = useCallback((qs) => {
         setActiveQuick(qs.label);
-        setMonths([...qs.months]);
+
+        const nextMonths = [...qs.months];
+        setMonths(nextMonths);
+        setYearConfigs(prev => ({
+          ...prev,
+          [year]: nextMonths,
+        }));
+      }, [year]);
+
+      const handleYearChange = useCallback((e) => {
+        const nextYear = Number(e.target.value);
+        setYear(nextYear);
+        setActiveQuick(null);
+        setMonths(yearConfigs[nextYear] ?? []);
+      }, [yearConfigs]);
+
+      const clearCurrentYear = useCallback(() => {
+        setActiveQuick(null);
+        setMonths([]);
+        setYearConfigs(prev => {
+          const next = { ...prev };
+          delete next[year];
+          return next;
+        });
+      }, [year]);
+
+      const resetSession = useCallback(() => {
+        setIfsc("");
+        setAccountNumber("");
+        setYear(CUR_YEAR);
+        setMonths([]);
+        setYearConfigs({});
+        setStatus(STATUS.IDLE);
+        setErrorDetail("");
+        setActiveQuick(null);
+        setProgressLogs({});
       }, []);
 
       /* Derived quick-select active state */
@@ -392,21 +512,28 @@
 
       /* Form submit */
       const handleSubmit = useCallback(async () => {
-        if (!ifsc.trim() || !accountNumber.trim() || months.length === 0) return;
+        if (!ifsc.trim() || !accountNumber.trim() || selectedYearConfigs.length === 0) return;
 
         setStatus(STATUS.LOADING);
         setErrorDetail("");
+        setProgressLogs({});
 
-        // Derive filename from inputs (backend also sends Content-Disposition,
-        // but we prepare a fallback here).
         const safeIfsc = ifsc.trim().toUpperCase();
-        const filename = `treasury_${safeIfsc}_${year}.xlsx`;
+        const yearsConfig = selectedYearConfigs
+          .sort((a, b) => a.year - b.year);
+        const payloadData = {
+          ifsc_code: safeIfsc,
+          account_number: accountNumber.trim(),
+          years_config: yearsConfig,
+        };
+        const payloadString = JSON.stringify(payloadData);
 
-        // Generate a random UUID as the idempotency key.
-        // The server does NOT validate this cryptographically — it accepts
-        // any well-formed string and uses it only as a client-side correlation
-        // handle.  The server independently computes its own HMAC from the
-        // canonical payload for internal deduplication in the job queue.
+        // =================================================================
+        // 🔒 SECURITY RESTORATION ZONE
+        // The browser sends a client-generated UUID in X-Idempotency-Key.
+        // The server independently computes the HMAC from the canonical
+        // payload for deduplication, so the secret never leaves the client.
+        // =================================================================
         const idempotencyKey = crypto.randomUUID();
 
         try {
@@ -416,53 +543,80 @@
               "Content-Type":      "application/json",
               "X-Idempotency-Key": idempotencyKey,
             },
-            body: JSON.stringify({
-              ifsc_code:      safeIfsc,
-              account_number: accountNumber.trim(),
-              year:           parseInt(year, 10),
-              months:         months,
-            }),
+            body: payloadString,
           });
 
-          if (response.ok) {
-            // ── StreamingResponse → trigger download ──────────────────
-            // The browser receives a binary blob (the .xlsx stream).
-            // We create an ephemeral <a> tag, set its href to an object URL,
-            // and programmatically click it to invoke the Save dialog.
-            const contentDisposition = response.headers.get("Content-Disposition") || "";
-            const serverFilename = contentDisposition.match(/filename="([^"]+)"/)?.[1];
-            await downloadBlob(response, serverFilename || filename);
-            setStatus(STATUS.SUCCESS);
+          if (!response.ok) {
+            if (response.status === 429) {
+              setStatus(STATUS.ERR_429);
+              return;
+            }
+            if (response.status === 503) {
+              setStatus(STATUS.ERR_503);
+              return;
+            }
+
+            let detail = `HTTP ${response.status}`;
+            try {
+              const body = await response.json();
+              detail = body?.detail || detail;
+            } catch (_) { /* body may not be JSON */ }
+            setErrorDetail(detail);
+            setStatus(STATUS.ERR_GENERIC);
             return;
           }
 
-          // ── HTTP error handling ────────────────────────────────────
-          if (response.status === 429) {
-            setStatus(STATUS.ERR_429);
-            return;
-          }
-          if (response.status === 503) {
-            setStatus(STATUS.ERR_503);
-            return;
-          }
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
 
-          // Other errors (422, 500 …)
-          let detail = `HTTP ${response.status}`;
-          try {
-            const body = await response.json();
-            detail = body?.detail || detail;
-          } catch (_) { /* body may not be JSON */ }
-          setErrorDetail(detail);
-          setStatus(STATUS.ERR_GENERIC);
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const parts = buffer.split("\n\n");
+            buffer = parts.pop();
+
+            for (const part of parts) {
+              if (!part.startsWith("data: ")) continue;
+
+              const dataStr = part.replace("data: ", "").trim();
+              if (!dataStr) continue;
+
+              const event = JSON.parse(dataStr);
+
+              if (event.type === "status") {
+                setProgressLogs(prev => ({
+                  ...prev,
+                  [`${event.year}-${event.month}`]: {
+                    status: event.status,
+                    message: event.message,
+                  },
+                }));
+              } else if (event.type === "complete") {
+                if (event.url) {
+                  const apiOrigin = new URL(API_ENDPOINT).origin;
+                  window.location.href = `${apiOrigin}${event.url}`;
+                }
+                setStatus(STATUS.SUCCESS);
+                return;
+              } else if (event.type === "error") {
+                setErrorDetail(event.message || "Extraction failed.");
+                setStatus(STATUS.ERR_GENERIC);
+                return;
+              }
+            }
+          }
 
         } catch (err) {
           // Network-level failure (CORS block, server down, etc.)
           setErrorDetail(err.message || "Network error — is the backend running?");
           setStatus(STATUS.ERR_GENERIC);
         }
-      }, [ifsc, accountNumber, year, months]);
+      }, [ifsc, accountNumber, year, months, selectedYearConfigs]);
 
-      const isReady = ifsc.trim() && accountNumber.trim() && months.length > 0;
+      const isReady = ifsc.trim() && accountNumber.trim() && selectedYearConfigs.length > 0;
       const isLoading = status === STATUS.LOADING;
 
       return (
@@ -512,13 +666,39 @@
               <label>Financial Year</label>
               <select
                 value={year}
-                onChange={e => setYear(e.target.value)}
+                onChange={handleYearChange}
                 disabled={isLoading}
               >
                 {YEARS.map(y => (
                   <option key={y} value={y}>{y} – {y + 1}</option>
                 ))}
               </select>
+              <p className="month-hint" style={{marginTop: "10px"}}>
+                Editing year <strong>{year}</strong>. Select months for this year, then switch to another year to keep adding.
+              </p>
+              {selectedYearConfigs.length > 0 && (
+                <p className="month-hint" style={{marginTop: "6px"}}>
+                  Selected {selectedYearConfigs.length} year{selectedYearConfigs.length > 1 ? "s" : ""}: {selectedYearConfigs.map(({ year: y, months: m }) => `${y} (${m.length} month${m.length > 1 ? "s" : ""})`).join("; ")}
+                </p>
+              )}
+              <div className="control-row" style={{marginTop: "12px", gap: "10px"}}>
+                <button
+                  type="button"
+                  className="btn-quick"
+                  onClick={clearCurrentYear}
+                  disabled={isLoading || !(yearConfigs[year] && yearConfigs[year].length > 0)}
+                >
+                  Clear year {year}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={resetSession}
+                  disabled={isLoading}
+                >
+                  New session
+                </button>
+              </div>
             </div>
 
             {/* Month Selection */}
@@ -542,7 +722,15 @@
                 {months.length > 0 && (
                   <button
                     className="btn-quick"
-                    onClick={() => { setMonths([]); setActiveQuick(null); }}
+                    onClick={() => {
+                      setMonths([]);
+                      setActiveQuick(null);
+                      setYearConfigs(prev => {
+                        const next = { ...prev };
+                        delete next[year];
+                        return next;
+                      });
+                    }}
                     disabled={isLoading}
                   >
                     Clear
@@ -567,7 +755,7 @@
               <p className="month-hint">
                 {months.length === 0
                   ? "Select at least one month to proceed."
-                  : <><span>{months.length}</span> month{months.length > 1 ? "s" : ""} selected — {months.map(m => MONTH_BY_VALUE[m]?.label || m).join(", ")}</>
+                  : <><strong>Year {year}:</strong> <span>{months.length}</span> month{months.length > 1 ? "s" : ""} selected — {months.map(m => MONTH_BY_VALUE[m]?.label || m).join(", ")}</>
                 }
               </p>
             </div>
@@ -585,6 +773,23 @@
               <div className="progress-wrap">
                 <div className="progress-bar" />
               </div>
+              {Object.keys(progressLogs).length > 0 && (
+                <div className="progress-log">
+                  {Object.entries(progressLogs).map(([key, entry]) => {
+                    const [eventYear, eventMonth] = key.split("-");
+                    const label = `${eventYear} - ${getMonthLabel(Number(eventMonth))}`;
+                    return (
+                      <div key={key} className={`progress-log-item ${entry.status}`}>
+                        <span className="progress-log-key">{label}</span>
+                        <span className="progress-log-status">{entry.status}</span>
+                        {entry.message && (
+                          <span className="progress-log-message">{entry.message}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

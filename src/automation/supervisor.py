@@ -198,6 +198,18 @@ class ExtractionJob:
     submitted_at  : float                  = field(default_factory=time.time)
 
 
+@dataclass
+class ExtractionJobMultiYear:
+    """Multi-year extraction job with SSE queue support."""
+    task_id       : str
+    ifsc          : str
+    account_no    : str
+    years_config  : list[tuple[int, list[int]]]
+    result_future : Optional[asyncio.Future] = field(default=None, repr=False)
+    progress_queue: Optional[asyncio.Queue]  = field(default=None, repr=False)
+    submitted_at  : float                    = field(default_factory=time.time)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # SUPERVISOR HEALTH  (exposed to the API Gateway for 429 / 503 semantics)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -268,7 +280,7 @@ class AutomationSupervisor:
     def __init__(self) -> None:
         # The asyncio.Queue is the IPC boundary between the API and this Supervisor.
         # maxsize enforces back-pressure: put() will block (or raise) if full.
-        self._queue: asyncio.Queue[ExtractionJob] = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
+        self._queue: asyncio.Queue = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
 
         # Live health snapshot — read by the API without any locks needed because
         # asyncio is single-threaded (no concurrent mutation possible).
@@ -329,7 +341,7 @@ class AutomationSupervisor:
 
         logger.info("[SUPERVISOR] Shutdown complete.")
 
-    async def submit(self, job: ExtractionJob) -> None:
+    async def submit(self, job: Any) -> None:
         """
         Enqueue a job from the API Gateway.
 
@@ -395,7 +407,7 @@ class AutomationSupervisor:
         while not self._stop_event.is_set():
             try:
                 # Wait up to 1 second for a job; loop back to check stop_event.
-                job: ExtractionJob = await asyncio.wait_for(
+                job: Any = await asyncio.wait_for(
                     self._queue.get(), timeout=1.0
                 )
             except asyncio.TimeoutError:
@@ -417,7 +429,11 @@ class AutomationSupervisor:
             self.health.active_jobs += 1
 
             try:
-                await self._execute_job(job)
+                if isinstance(job, ExtractionJobMultiYear):
+                    await self._execute_job_multi_year(job)
+                else:
+                    await self._execute_job(job)
+
                 if job.result_future and job.result_future.cancelled():
                     logger.warning(
                         "[SUPERVISOR] Cancelled job ended without result: task_id=%s",
@@ -558,6 +574,100 @@ class AutomationSupervisor:
             # ALWAYS clean up the /tmp directory and zero the key,
             # even if an exception occurred.
             cleanup_session(task_state)
+
+    async def _execute_job_multi_year(self, job: ExtractionJobMultiYear) -> None:
+        logger.info(
+            "[SUPERVISOR] Executing multi-year job: task_id=%s years_config=%s",
+            job.task_id, job.years_config,
+        )
+
+        cumulative_df = pd.DataFrame()
+
+        try:
+            for year, months in job.years_config:
+                # Create a fresh browser/checkpoint state for each year.
+                task_state = create_session(year=year, task_id=job.task_id)
+
+                try:
+                    for month in months:
+                        if job.result_future and job.result_future.cancelled():
+                            return
+
+                        if job.progress_queue:
+                            await job.progress_queue.put({
+                                "type": "status",
+                                "year": year,
+                                "month": month,
+                                "status": "processing",
+                            })
+
+                        try:
+                            month_df = await self._extract_month_with_retry(
+                                task_state=task_state,
+                                ifsc=job.ifsc,
+                                account_no=job.account_no,
+                                year=year,
+                                month=month,
+                            )
+
+                            if month_df.empty:
+                                if job.progress_queue:
+                                    await job.progress_queue.put({
+                                        "type": "status",
+                                        "year": year,
+                                        "month": month,
+                                        "status": "no_data",
+                                    })
+                            else:
+                                month_df.insert(0, "Year", year)
+                                month_df.insert(1, "Month", month)
+                                cumulative_df = _append_month(cumulative_df, month_df)
+                                checkpoint_save(task_state, cumulative_df, month=month)
+                                task_state.advance_state(WorkflowState.CHECKPOINT_SAVED)
+
+                                if job.progress_queue:
+                                    await job.progress_queue.put({
+                                        "type": "status",
+                                        "year": year,
+                                        "month": month,
+                                        "status": "success",
+                                    })
+
+                        except Exception as exc:
+                            logger.error(
+                                "[SUPERVISOR] Month %02d/%s failed permanently: %s",
+                                month, year, exc,
+                            )
+                            if job.progress_queue:
+                                await job.progress_queue.put({
+                                    "type": "status",
+                                    "year": year,
+                                    "month": month,
+                                    "status": "error",
+                                    "message": str(exc),
+                                })
+
+                        finally:
+                            task_state.current_workflow_state = WorkflowState.INIT
+
+                finally:
+                    cleanup_session(task_state)
+
+            if job.result_future and not job.result_future.done():
+                job.result_future.set_result(cumulative_df)
+
+        except Exception as exc:
+            logger.error(
+                "[SUPERVISOR] Multi-year job %s failed: %s\n%s",
+                job.task_id, exc, traceback.format_exc(),
+            )
+            if job.result_future and not job.result_future.done():
+                job.result_future.set_exception(exc)
+            raise
+
+        finally:
+            if job.progress_queue:
+                await job.progress_queue.put(None)
 
     async def _extract_month_with_retry(
         self,
@@ -741,7 +851,7 @@ class AutomationSupervisor:
     # CRASH HANDLING & CIRCUIT BREAKER
     # ──────────────────────────────────────────────────────────────────────
 
-    def _handle_job_failure(self, job: ExtractionJob, exc: Exception) -> None:
+    def _handle_job_failure(self, job: Any, exc: Exception) -> None:
         """
         Update health metrics after a job-level failure and open the circuit
         breaker if the crash threshold is exceeded.
