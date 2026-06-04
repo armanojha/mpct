@@ -1,0 +1,8 @@
+﻿fastapi
+uvicorn[standard]
+pydantic
+playwright
+pandas
+numpy
+openpyxl
+cryptography

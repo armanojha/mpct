@@ -3,153 +3,463 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MPCT-AP · Treasury Extraction Portal</title>
+  <title>MPCT-AP · E-Payment Status Report Generator</title>
 
   <!-- React + Babel via CDN (no build step required) -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
+  <!-- Google Fonts: Syne (display) + DM Sans (body) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap" rel="stylesheet" />
+
   <style>
-    /* ── Reset & Base ─────────────────────────────────────────────── */
+    /* ── Reset ─────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    /* ── Design Tokens ─────────────────────────────────────────────── */
     :root {
-      --bg:           #0f1117;
-      --surface:      #1a1d27;
-      --surface2:     #22263a;
-      --border:       #2e3350;
-      --accent:       #4f6ef7;
-      --accent-hover: #3b57e8;
-      --accent-dim:   rgba(79,110,247,0.15);
-      --success:      #22c55e;
-      --warn:         #f59e0b;
-      --error:        #ef4444;
-      --text:         #e2e8f0;
-      --text-muted:   #64748b;
-      --text-dim:     #94a3b8;
-      --radius:       10px;
-      --font:         'Inter', system-ui, -apple-system, sans-serif;
+      /* Dark theme (default) */
+      --bg:            #0b0d14;
+      --bg-alt:        #0f1120;
+      --surface:       #131627;
+      --surface2:      #1a1e35;
+      --surface3:      #1f2440;
+      --border:        rgba(255,255,255,0.07);
+      --border-accent: rgba(99,120,255,0.4);
+
+      --accent:        #6378ff;
+      --accent2:       #a855f7;
+      --accent-hover:  #4f65f0;
+      --accent-dim:    rgba(99,120,255,0.12);
+      --accent-glow:   rgba(99,120,255,0.25);
+
+      --teal:          #00d4aa;
+      --teal-dim:      rgba(0,212,170,0.12);
+      --amber:         #f59e0b;
+      --amber-dim:     rgba(245,158,11,0.12);
+      --violet:        #a855f7;
+      --violet-dim:    rgba(168,85,247,0.12);
+
+      --success:       #22c55e;
+      --warn:          #f59e0b;
+      --error:         #ef4444;
+
+      --text:          #e8eaf6;
+      --text-muted:    #5c6490;
+      --text-dim:      #8891c0;
+      --text-bright:   #ffffff;
+
+      --radius:        12px;
+      --radius-sm:     8px;
+      --font-display:  'Syne', sans-serif;
+      --font-body:     'DM Sans', system-ui, sans-serif;
+
+      /* Gradient button */
+      --grad-btn:      linear-gradient(135deg, #4f65f0 0%, #7c3aed 100%);
+      --grad-btn-h:    linear-gradient(135deg, #3b52e0 0%, #6d28d9 100%);
     }
 
+    /* ── Base ──────────────────────────────────────────────────────── */
+    html { scroll-behavior: smooth; }
     body {
       background: var(--bg);
       color: var(--text);
-      font-family: var(--font);
+      font-family: var(--font-body);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      padding: 32px 16px 64px;
+      font-size: 14px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
     }
 
-    /* ── Layout ───────────────────────────────────────────────────── */
-    .shell {
-      width: 100%;
-      max-width: 720px;
+    /* ── Scrollbar ──────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 3px; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       TOP NAVIGATION
+    ══════════════════════════════════════════════════════════════════ */
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(11,13,20,0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      height: 60px;
+    }
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      flex-shrink: 0;
+    }
+    .nav-logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 17px;
+    }
+    .nav-brand-text {
       display: flex;
       flex-direction: column;
-      gap: 24px;
+      line-height: 1.15;
     }
-
-    /* ── Header ───────────────────────────────────────────────────── */
-    .header {
-      text-align: center;
-      padding-bottom: 8px;
-      border-bottom: 1px solid var(--border);
-    }
-    .header h1 {
-      font-size: 1.5rem;
+    .nav-brand-title {
+      font-family: var(--font-display);
+      font-size: 15px;
       font-weight: 700;
-      letter-spacing: -0.02em;
-      color: var(--text);
+      color: var(--text-bright);
+      letter-spacing: -0.01em;
     }
-    .header h1 span { color: var(--accent); }
-    .header p {
-      margin-top: 6px;
-      font-size: 0.85rem;
-      color: var(--text-muted);
+    .nav-brand-sub {
+      font-size: 10px;
+      color: var(--accent);
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .nav-link {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-family: var(--font-body);
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--text-dim);
+      padding: 6px 14px;
+      border-radius: 6px;
+      transition: color 0.15s, background 0.15s;
+      position: relative;
+    }
+    .nav-link:hover { color: var(--text); background: var(--surface2); }
+    .nav-link.active {
+      color: var(--accent);
+      background: var(--accent-dim);
+    }
+    .nav-link.active::after {
+      content: '';
+      position: absolute;
+      bottom: -10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 20px;
+      height: 2px;
+      background: var(--accent);
+      border-radius: 2px;
+    }
+    .nav-dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      margin: 0 4px;
     }
 
-    /* ── Card ─────────────────────────────────────────────────────── */
-    .card {
+    /* ══════════════════════════════════════════════════════════════════
+       PAGE SHELL
+    ══════════════════════════════════════════════════════════════════ */
+    .page { flex: 1; }
+
+    /* ── Main (Dashboard) Layout ────────────────────────────────────── */
+    .main-wrap {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 40px 32px 80px;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       HERO SECTION
+    ══════════════════════════════════════════════════════════════════ */
+    .hero {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 40px;
+      align-items: start;
+    }
+    .hero-eyebrow {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+    .hero-title {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--text-bright);
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      margin-bottom: 4px;
+    }
+    .hero-title .accent { color: var(--accent); }
+    .hero-subtitle {
+      font-size: 13px;
+      color: var(--text-dim);
+      font-weight: 400;
+      margin-bottom: 6px;
+    }
+    .hero-tagline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+      font-size: 12px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .hero-tagline::before, .hero-tagline::after {
+      content: '';
+      flex: 1;
+      max-width: 40px;
+      height: 1px;
+      background: var(--border);
+    }
+    .hero-cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    .hero-card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 24px;
+      padding: 18px 16px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      transition: border-color 0.2s, transform 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero-card::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, transparent 60%, var(--card-tint, transparent));
+      opacity: 0.4;
+      pointer-events: none;
+    }
+    .hero-card:hover { border-color: var(--border-accent); transform: translateY(-2px); }
+    .hero-card-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      background: var(--icon-bg, var(--accent-dim));
+    }
+    .hero-card-name {
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--card-color, var(--accent));
+    }
+    .hero-card-desc {
+      font-size: 11.5px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+    .hero-card-bar {
+      height: 2px;
+      width: 32px;
+      border-radius: 2px;
+      background: var(--card-color, var(--accent));
+      margin-top: auto;
+    }
+    /* Card colour variants */
+    .hc-teal  { --card-color: var(--teal);   --icon-bg: var(--teal-dim);   --card-tint: var(--teal-dim); }
+    .hc-blue  { --card-color: var(--accent);  --icon-bg: var(--accent-dim); --card-tint: var(--accent-dim); }
+    .hc-viol  { --card-color: var(--violet);  --icon-bg: var(--violet-dim); --card-tint: var(--violet-dim); }
+    .hc-amber { --card-color: var(--amber);   --icon-bg: var(--amber-dim);  --card-tint: var(--amber-dim); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       MAIN CONTENT COLUMNS
+    ══════════════════════════════════════════════════════════════════ */
+    .content-grid {
+      display: grid;
+      grid-template-columns: 1fr 280px;
+      gap: 24px;
+      align-items: start;
+    }
+
+    /* ── Section Panel ──────────────────────────────────────────────── */
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .panel-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .panel-header-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      background: var(--accent-dim);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+    }
+    .panel-title {
+      font-family: var(--font-display);
+      font-size: 11.5px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .panel-body {
+      padding: 20px;
       display: flex;
       flex-direction: column;
       gap: 20px;
     }
-    .card-title {
-      font-size: 0.75rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-muted);
-      margin-bottom: -8px;
-    }
 
-    /* ── Form Row ─────────────────────────────────────────────────── */
-    .row { display: flex; gap: 16px; }
-    .row .field { flex: 1; }
+    /* ── Field Rows ─────────────────────────────────────────────────── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 
-    /* ── Field ────────────────────────────────────────────────────── */
-    .field {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-    }
+    /* ── Field ──────────────────────────────────────────────────────── */
+    .field { display: flex; flex-direction: column; gap: 6px; }
     .field label {
-      font-size: 0.78rem;
-      font-weight: 500;
-      color: var(--text-dim);
-      letter-spacing: 0.02em;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
     }
     .field input,
     .field select {
       background: var(--surface2);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       color: var(--text);
-      font-family: var(--font);
-      font-size: 0.9rem;
+      font-family: var(--font-body);
+      font-size: 13.5px;
       padding: 9px 12px;
       width: 100%;
       transition: border-color 0.15s, box-shadow 0.15s;
       outline: none;
+      appearance: none;
+      -webkit-appearance: none;
     }
     .field input:focus,
     .field select:focus {
       border-color: var(--accent);
-      box-shadow: 0 0 0 3px var(--accent-dim);
+      box-shadow: 0 0 0 3px var(--accent-glow);
     }
     .field input::placeholder { color: var(--text-muted); }
     .field select option { background: var(--surface2); }
 
-    /* ── Month Grid ───────────────────────────────────────────────── */
-    .month-section { display: flex; flex-direction: column; gap: 12px; }
+    /* select chevron */
+    .select-wrap { position: relative; }
+    .select-wrap select { padding-right: 32px; cursor: pointer; }
+    .select-wrap::after {
+      content: '▾';
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-muted);
+      pointer-events: none;
+      font-size: 11px;
+    }
 
-    .quick-btns {
+    /* ── Bank + Year row ────────────────────────────────────────────── */
+    .bank-year-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr auto;
+      gap: 16px;
+      align-items: end;
+    }
+    .year-actions {
       display: flex;
-      flex-wrap: wrap;
       gap: 8px;
     }
+
+    /* ── Month Section ──────────────────────────────────────────────── */
+    .month-section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 20px;
+      border-top: 1px solid var(--border);
+    }
+    .month-section-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: var(--teal-dim);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+    }
+    .month-section-title {
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--teal);
+    }
+    .month-section-body { padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+
+    /* Quick select row */
+    .quick-btns { display: flex; flex-wrap: wrap; gap: 8px; }
     .btn-quick {
       background: var(--surface2);
       border: 1px solid var(--border);
       border-radius: 6px;
       color: var(--text-dim);
       cursor: pointer;
-      font-family: var(--font);
-      font-size: 0.78rem;
+      font-family: var(--font-body);
+      font-size: 12px;
       font-weight: 500;
-      padding: 5px 12px;
+      padding: 5px 13px;
       transition: background 0.12s, border-color 0.12s, color 0.12s;
+      white-space: nowrap;
     }
     .btn-quick:hover {
       background: var(--accent-dim);
-      border-color: var(--accent);
+      border-color: var(--border-accent);
       color: var(--accent);
     }
     .btn-quick.active {
@@ -157,205 +467,651 @@
       border-color: var(--accent);
       color: var(--accent);
     }
+    .btn-quick:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    /* Month grid: 6 columns, rectangular cells */
     .month-grid {
       display: grid;
       grid-template-columns: repeat(6, 1fr);
       gap: 8px;
     }
     .month-cell {
-      aspect-ratio: 1.6;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      border-radius: 6px;
+      gap: 3px;
+      padding: 10px 4px;
+      border-radius: var(--radius-sm);
       border: 1px solid var(--border);
       background: var(--surface2);
       cursor: pointer;
-      transition: background 0.12s, border-color 0.12s;
       user-select: none;
-      gap: 2px;
+      transition: background 0.12s, border-color 0.15s, transform 0.1s;
+      min-height: 56px;
     }
-    .month-cell:hover { border-color: var(--accent); }
+    .month-cell:hover:not(.disabled) {
+      border-color: var(--border-accent);
+      background: var(--surface3);
+      transform: translateY(-1px);
+    }
     .month-cell.selected {
       background: var(--accent-dim);
       border-color: var(--accent);
     }
-    .month-cell .m-num {
-      font-size: 0.7rem;
-      font-weight: 700;
-      color: var(--text-muted);
-    }
-    .month-cell.selected .m-num { color: var(--accent); }
-    .month-cell .m-name {
-      font-size: 0.78rem;
+    .month-cell.disabled { opacity: 0.4; cursor: not-allowed; }
+    .m-name {
+      font-size: 12.5px;
       font-weight: 600;
       color: var(--text-dim);
+      font-family: var(--font-display);
     }
     .month-cell.selected .m-name { color: var(--accent); }
+    .m-num {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+    .month-cell.selected .m-num { color: var(--accent); opacity: 0.75; }
 
     .month-hint {
-      font-size: 0.76rem;
+      font-size: 11.5px;
       color: var(--text-muted);
     }
     .month-hint span { color: var(--accent); font-weight: 600; }
 
-    /* ── Submit Button ────────────────────────────────────────────── */
+    /* ── Buttons ────────────────────────────────────────────────────── */
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-dim);
+      font-family: var(--font-body);
+      font-size: 12.5px;
+      font-weight: 500;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+      white-space: nowrap;
+    }
+    .btn-outline:hover:not(:disabled) {
+      border-color: var(--border-accent);
+      color: var(--text);
+      background: var(--surface2);
+    }
+    .btn-outline:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary-outline {
+      background: transparent;
+      border: 1px solid var(--border-accent);
+      border-radius: var(--radius-sm);
+      color: var(--accent);
+      font-family: var(--font-body);
+      font-size: 12.5px;
+      font-weight: 500;
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .btn-primary-outline:hover:not(:disabled) { background: var(--accent-dim); }
+    .btn-primary-outline:disabled { opacity: 0.4; cursor: not-allowed; }
+
     .btn-submit {
-      background: var(--accent);
+      background: var(--grad-btn);
       border: none;
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       color: #fff;
       cursor: pointer;
-      font-family: var(--font);
-      font-size: 0.95rem;
+      font-family: var(--font-body);
+      font-size: 14.5px;
       font-weight: 600;
-      padding: 13px 24px;
+      padding: 14px 24px;
       text-align: center;
-      transition: background 0.15s, opacity 0.15s;
+      transition: opacity 0.15s, transform 0.1s, box-shadow 0.2s;
       width: 100%;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 10px;
       letter-spacing: 0.01em;
+      box-shadow: 0 4px 24px rgba(79,101,240,0.3);
+      margin-top: 4px;
     }
-    .btn-submit:hover:not(:disabled) { background: var(--accent-hover); }
-    .btn-submit:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-submit:hover:not(:disabled) {
+      background: var(--grad-btn-h);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 32px rgba(79,101,240,0.4);
+    }
+    .btn-submit:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; transform: none; }
 
-    .btn-secondary {
-      background: transparent;
+    /* ══════════════════════════════════════════════════════════════════
+       SIDEBAR
+    ══════════════════════════════════════════════════════════════════ */
+    .sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+    .side-card {
+      background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text);
-      padding: 12px 18px;
-      font-family: var(--font);
-      font-size: 0.9rem;
-      cursor: pointer;
-      transition: border-color 0.15s, background 0.15s, color 0.15s;
+      border-radius: var(--radius);
+      overflow: hidden;
     }
-    .btn-secondary:hover:not(:disabled) {
-      border-color: var(--accent);
-      color: var(--accent);
-      background: rgba(79,110,247,0.08);
-    }
-    .btn-secondary:disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-    }
-
-    .control-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .progress-log {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin-top: 12px;
-      padding: 12px;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-    }
-    .progress-log-item {
+    .side-card-header {
       display: flex;
       align-items: center;
       gap: 10px;
-      font-size: 0.82rem;
-      color: var(--text-muted);
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
     }
-    .progress-log-item.success { color: var(--success); }
-    .progress-log-item.error { color: var(--error); }
-    .progress-log-item.processing { color: var(--accent); }
-    .progress-log-key {
-      min-width: 110px;
-      font-weight: 600;
-      color: var(--text);
+    .side-card-icon {
+      font-size: 16px;
+      line-height: 1;
     }
-    .progress-log-status {
+    .side-card-title {
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
-      font-size: 0.75rem;
       color: var(--text-dim);
     }
-    .progress-log-message {
-      flex: 1;
-      color: var(--text);
+    .side-card-body {
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .side-card-desc {
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .check-list {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .check-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+    .check-item::before {
+      content: '✓';
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      background: rgba(34,197,94,0.15);
+      color: var(--success);
+      font-size: 10px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
     }
 
-    /* Spinner */
+    /* ══════════════════════════════════════════════════════════════════
+       PROGRESS / LOADING
+    ══════════════════════════════════════════════════════════════════ */
     @keyframes spin { to { transform: rotate(360deg); } }
     .spinner {
-      width: 18px; height: 18px;
-      border: 2px solid rgba(255,255,255,0.25);
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.2);
       border-top-color: #fff;
       border-radius: 50%;
       animation: spin 0.7s linear infinite;
       flex-shrink: 0;
     }
-
-    /* ── Status Banner ────────────────────────────────────────────── */
-    .banner {
-      border-radius: 8px;
-      padding: 14px 16px;
-      font-size: 0.875rem;
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
-      line-height: 1.5;
-    }
-    .banner.error   { background: rgba(239,68,68,0.1);  border: 1px solid rgba(239,68,68,0.35);  color: #fca5a5; }
-    .banner.warn    { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.35); color: #fcd34d; }
-    .banner.success { background: rgba(34,197,94,0.1);  border: 1px solid rgba(34,197,94,0.35);  color: #86efac; }
-    .banner.info    { background: rgba(79,110,247,0.1); border: 1px solid rgba(79,110,247,0.35); color: #a5b4fc; }
-
-    .banner-icon { font-size: 1.05rem; flex-shrink: 0; margin-top: 1px; }
-    .banner-body { flex: 1; }
-    .banner-title { font-weight: 700; display: block; margin-bottom: 2px; }
-    .banner-sub   { color: inherit; opacity: 0.8; font-size: 0.82rem; }
-
-    /* ── Progress Bar ─────────────────────────────────────────────── */
-    .progress-wrap {
-      background: var(--surface2);
-      border-radius: 4px;
-      height: 4px;
-      overflow: hidden;
+    .spinner-dark {
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
     }
     @keyframes indeterminate {
       0%   { transform: translateX(-100%); }
       100% { transform: translateX(400%); }
     }
+    .progress-wrap {
+      background: var(--surface2);
+      border-radius: 3px;
+      height: 3px;
+      overflow: hidden;
+    }
     .progress-bar {
       height: 100%;
-      background: var(--accent);
-      border-radius: 4px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-radius: 3px;
       animation: indeterminate 1.4s ease-in-out infinite;
       width: 25%;
     }
 
-    /* ── Footer ───────────────────────────────────────────────────── */
-    .footer {
-      font-size: 0.73rem;
-      color: var(--text-muted);
-      text-align: center;
-      padding-top: 8px;
-      border-top: 1px solid var(--border);
+    .progress-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
     }
+    .progress-header { display: flex; align-items: center; gap: 10px; }
+    .progress-label { font-size: 13px; color: var(--text-dim); }
+
+    .progress-log {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .progress-log-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .progress-log-item.success { color: var(--success); }
+    .progress-log-item.error   { color: var(--error); }
+    .progress-log-item.processing { color: var(--accent); }
+    .progress-log-key { min-width: 110px; font-weight: 600; color: var(--text); font-size: 12px; }
+    .progress-log-status { text-transform: uppercase; letter-spacing: 0.05em; font-size: 10.5px; color: var(--text-muted); }
+    .progress-log-message { flex: 1; font-size: 12px; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       STATUS BANNERS
+    ══════════════════════════════════════════════════════════════════ */
+    .banner {
+      border-radius: var(--radius-sm);
+      padding: 13px 16px;
+      font-size: 13px;
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      line-height: 1.5;
+    }
+    .banner.error   { background: rgba(239,68,68,0.08);  border: 1px solid rgba(239,68,68,0.3);  color: #fca5a5; }
+    .banner.warn    { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.3); color: #fcd34d; }
+    .banner.success { background: rgba(34,197,94,0.08);  border: 1px solid rgba(34,197,94,0.3);  color: #86efac; }
+    .banner.info    { background: rgba(99,120,255,0.08); border: 1px solid rgba(99,120,255,0.3); color: #a5b4fc; }
+    .banner-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+    .banner-body { flex: 1; }
+    .banner-title { font-weight: 700; display: block; margin-bottom: 2px; }
+    .banner-sub   { color: inherit; opacity: 0.8; font-size: 12px; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       ABOUT PAGE
+    ══════════════════════════════════════════════════════════════════ */
+    .about-wrap {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 48px 32px 80px;
+      display: flex;
+      flex-direction: column;
+      gap: 40px;
+    }
+    .about-hero {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .about-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--accent-dim);
+      border: 1px solid var(--border-accent);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--accent);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      width: fit-content;
+    }
+    .about-title {
+      font-family: var(--font-display);
+      font-size: 2.6rem;
+      font-weight: 800;
+      color: var(--text-bright);
+      letter-spacing: -0.03em;
+      line-height: 1.1;
+    }
+    .about-title .accent { color: var(--accent); }
+    .about-lead {
+      font-size: 16px;
+      color: var(--text-dim);
+      line-height: 1.7;
+      max-width: 640px;
+    }
+    .about-divider {
+      height: 1px;
+      background: var(--border);
+    }
+    .about-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .about-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .about-card-icon {
+      font-size: 24px;
+      line-height: 1;
+    }
+    .about-card-title {
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-bright);
+    }
+    .about-card-body {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.65;
+    }
+    .team-section { display: flex; flex-direction: column; gap: 20px; }
+    .team-title {
+      font-family: var(--font-display);
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text-bright);
+    }
+    .team-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .team-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      text-align: center;
+    }
+    .team-avatar {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: var(--surface3);
+      border: 2px solid var(--border-accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+    .team-name {
+      font-weight: 600;
+      font-size: 13.5px;
+      color: var(--text-bright);
+    }
+    .team-role {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .phase-row {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .phase-item {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+    }
+    .phase-num {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      background: var(--accent-dim);
+      border: 1px solid var(--border-accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: var(--font-display);
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--accent);
+      flex-shrink: 0;
+    }
+    .phase-done .phase-num { background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.4); color: var(--success); }
+    .phase-label { font-size: 13px; color: var(--text); font-weight: 500; }
+    .phase-tag {
+      margin-left: auto;
+      font-size: 10.5px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    .tag-done { background: rgba(34,197,94,0.12); color: var(--success); }
+    .tag-active { background: var(--accent-dim); color: var(--accent); }
+    .tag-todo { background: var(--surface2); color: var(--text-muted); }
+
+    /* ══════════════════════════════════════════════════════════════════
+       HELP PAGE
+    ══════════════════════════════════════════════════════════════════ */
+    .help-wrap {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 48px 32px 80px;
+      display: flex;
+      flex-direction: column;
+      gap: 32px;
+    }
+    .help-header { display: flex; flex-direction: column; gap: 10px; }
+    .help-title {
+      font-family: var(--font-display);
+      font-size: 2rem;
+      font-weight: 800;
+      color: var(--text-bright);
+      letter-spacing: -0.02em;
+    }
+    .help-sub { font-size: 14px; color: var(--text-dim); line-height: 1.6; }
+    .help-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .help-panel-head {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .help-panel-icon { font-size: 18px; }
+    .help-panel-title {
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-bright);
+    }
+    .help-form {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .help-field { display: flex; flex-direction: column; gap: 7px; }
+    .help-label {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .help-input,
+    .help-textarea,
+    .help-select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 13.5px;
+      padding: 10px 13px;
+      width: 100%;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .help-input:focus,
+    .help-textarea:focus,
+    .help-select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .help-input::placeholder,
+    .help-textarea::placeholder { color: var(--text-muted); }
+    .help-textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
+
+    /* File drop zone */
+    .file-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius-sm);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+      text-align: center;
+    }
+    .file-zone:hover { border-color: var(--border-accent); background: var(--accent-dim); }
+    .file-zone-icon { font-size: 24px; color: var(--text-muted); }
+    .file-zone-label { font-size: 13px; color: var(--text-dim); }
+    .file-zone-sub { font-size: 11px; color: var(--text-muted); }
+    .file-name-chip {
+      background: var(--accent-dim);
+      border: 1px solid var(--border-accent);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .help-submit {
+      background: var(--grad-btn);
+      border: none;
+      border-radius: var(--radius-sm);
+      color: #fff;
+      font-family: var(--font-body);
+      font-size: 14px;
+      font-weight: 600;
+      padding: 13px 24px;
+      cursor: pointer;
+      transition: opacity 0.15s, box-shadow 0.2s;
+      box-shadow: 0 4px 20px rgba(79,101,240,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .help-submit:hover { opacity: 0.9; box-shadow: 0 6px 28px rgba(79,101,240,0.4); }
+
+    .help-faq { display: flex; flex-direction: column; gap: 12px; }
+    .faq-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+    }
+    .faq-q {
+      font-weight: 600;
+      font-size: 13.5px;
+      color: var(--text-bright);
+      margin-bottom: 6px;
+    }
+    .faq-a { font-size: 12.5px; color: var(--text-dim); line-height: 1.6; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       FOOTER
+    ══════════════════════════════════════════════════════════════════ */
+    .footer {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      text-align: center;
+      padding: 18px 32px;
+      font-size: 12px;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .footer-dot { opacity: 0.4; }
     .footer code {
       background: var(--surface2);
       border-radius: 3px;
       padding: 1px 5px;
-      font-size: 0.7rem;
+      font-size: 11px;
       color: var(--accent);
     }
 
-    @media (max-width: 480px) {
-      .row { flex-direction: column; }
+    /* ══════════════════════════════════════════════════════════════════
+       ANIMATIONS
+    ══════════════════════════════════════════════════════════════════ */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .anim-fadeup { animation: fadeUp 0.35s ease both; }
+    .anim-d1 { animation-delay: 0.05s; }
+    .anim-d2 { animation-delay: 0.1s; }
+    .anim-d3 { animation-delay: 0.15s; }
+    .anim-d4 { animation-delay: 0.2s; }
+
+    /* ══════════════════════════════════════════════════════════════════
+       RESPONSIVE
+    ══════════════════════════════════════════════════════════════════ */
+    @media (max-width: 960px) {
+      .hero { grid-template-columns: 1fr; }
+      .hero-cards { grid-template-columns: repeat(2, 1fr); }
+      .content-grid { grid-template-columns: 1fr; }
+      .sidebar { flex-direction: row; flex-wrap: wrap; }
+      .side-card { flex: 1; min-width: 240px; }
+    }
+    @media (max-width: 640px) {
+      .main-wrap { padding: 24px 16px 64px; }
+      .topnav { padding: 0 16px; }
+      .bank-year-row { grid-template-columns: 1fr; }
+      .two-col { grid-template-columns: 1fr; }
       .month-grid { grid-template-columns: repeat(4, 1fr); }
+      .hero-cards { grid-template-columns: 1fr 1fr; }
+      .about-grid { grid-template-columns: 1fr; }
+      .team-grid { grid-template-columns: 1fr 1fr; }
     }
   </style>
 </head>
@@ -363,12 +1119,13 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useCallback } = React;
+    const { useState, useCallback, useRef } = React;
 
-    /* ── Constants ─────────────────────────────────────────────────── */
-    const API_ENDPOINT = "http://127.0.0.1:8000/api/v1/extract";
+    /* ══════════════════════════════════════════════════════════════════
+       CONSTANTS
+    ══════════════════════════════════════════════════════════════════ */
+    const API_ENDPOINT = "/api/v1/extract";
 
-    // April-first display order, calendar-month values sent to the backend.
     const MONTH_META = [
       { name: "April",     label: "Apr", value: 4  },
       { name: "May",       label: "May", value: 5  },
@@ -384,7 +1141,7 @@
       { name: "March",     label: "Mar", value: 3  },
     ];
     const MONTH_BY_VALUE = Object.fromEntries(MONTH_META.map(m => [m.value, m]));
-    const getMonthLabel = (value) => MONTH_BY_VALUE[value]?.label || String(value);
+    const getMonthLabel  = (value) => MONTH_BY_VALUE[value]?.label || String(value);
 
     const QUICK_SELECT = [
       { label: "Q1 (Apr–Jun)",  months: [4, 5, 6]  },
@@ -394,28 +1151,25 @@
       { label: "Select All",    months: MONTH_META.map(m => m.value) },
     ];
 
-    // Build fiscal year options: current year ± 5
     const CUR_YEAR = new Date().getFullYear();
-    const YEARS = Array.from({ length: 11 }, (_, i) => CUR_YEAR - 5 + i);
+    const YEARS    = Array.from({ length: 11 }, (_, i) => CUR_YEAR - 5 + i);
 
-    /* ── Status helpers ────────────────────────────────────────────── */
     const STATUS = {
-      IDLE:       "idle",
-      LOADING:    "loading",
-      SUCCESS:    "success",
-      ERR_429:    "err_429",
-      ERR_503:    "err_503",
-      ERR_GENERIC:"err_generic",
+      IDLE:        "idle",
+      LOADING:     "loading",
+      SUCCESS:     "success",
+      ERR_429:     "err_429",
+      ERR_503:     "err_503",
+      ERR_GENERIC: "err_generic",
     };
 
     const STATUS_META = {
-      [STATUS.SUCCESS]:     { type: "success", icon: "✓", title: "Extraction complete",      sub: "Your Excel file has been downloaded." },
+      [STATUS.SUCCESS]:     { type: "success", icon: "✓", title: "Extraction complete",         sub: "Your Excel file has been downloaded." },
       [STATUS.ERR_429]:     { type: "warn",    icon: "⏳", title: "Queue full — retry shortly", sub: "The extraction queue is at capacity. Please wait a few seconds and submit again." },
-      [STATUS.ERR_503]:     { type: "error",   icon: "⚠", title: "Service unavailable",      sub: "The automation engine is currently unhealthy (circuit breaker open). Our team has been notified. Please retry later." },
-      [STATUS.ERR_GENERIC]: { type: "error",   icon: "✕", title: "Request failed",           sub: "" },
+      [STATUS.ERR_503]:     { type: "error",   icon: "⚠",  title: "Service unavailable",        sub: "The automation engine is currently unhealthy. Please retry later." },
+      [STATUS.ERR_GENERIC]: { type: "error",   icon: "✕", title: "Request failed",              sub: "" },
     };
 
-    /* ── Download helper ───────────────────────────────────────────── */
     async function downloadBlob(response, filename) {
       const blob = await response.blob();
       const url  = URL.createObjectURL(blob);
@@ -428,54 +1182,650 @@
       URL.revokeObjectURL(url);
     }
 
-    /* ── Root App ──────────────────────────────────────────────────── */
+    /* ══════════════════════════════════════════════════════════════════
+       SUB-COMPONENTS
+    ══════════════════════════════════════════════════════════════════ */
+
+    /* ── Top Navigation ─────────────────────────────────────────────── */
+    function Header({ activePage, setActivePage }) {
+      const links = ["Dashboard", "About", "Help"];
+      return (
+        <nav className="topnav">
+          <div className="nav-brand">
+            <div className="nav-logo">🏛️</div>
+            <div className="nav-brand-text">
+              <span className="nav-brand-title">MPCT-AP</span>
+              <span className="nav-brand-sub">E-Payment Status Report Generator</span>
+            </div>
+          </div>
+
+          <div className="nav-links">
+            {links.map((l, i) => (
+              <React.Fragment key={l}>
+                {i === links.length - 1 && <div className="nav-dot" />}
+                <button
+                  className={`nav-link${activePage === l ? " active" : ""}`}
+                  onClick={() => setActivePage(l)}
+                >
+                  {l}
+                </button>
+              </React.Fragment>
+            ))}
+          </div>
+        </nav>
+      );
+    }
+
+    /* ── Hero Section ───────────────────────────────────────────────── */
+    function HeroSection() {
+      const cards = [
+        {
+          cls: "hc-blue",
+          icon: "📄",
+          name: "E-PAYMENT REPORTS",
+          desc: "Extract real-time e-payment status from MP Treasury",
+        },
+        {
+          cls: "hc-teal",
+          icon: "🛡️",
+          name: "SECURE & STEALTH",
+          desc: "Advanced automation with enterprise-grade security",
+        },
+        {
+          cls: "hc-viol",
+          icon: "⚡",
+          name: "ACCURATE DATA",
+          desc: "Clean, validated & structured data for reliable reporting",
+        },
+        {
+          cls: "hc-amber",
+          icon: "📊",
+          name: "SAVE TIME",
+          desc: "Reduce manual effort and generate reports in minutes",
+        },
+      ];
+      return (
+        <div className="hero anim-fadeup">
+          <div className="hero-text">
+            <h1 className="hero-title">
+              Welcome to <span className="accent">MPCT-AP</span> 🏛️
+            </h1>
+            <p className="hero-subtitle">MP Cyber Treasury Automated Pipeline</p>
+            <p className="hero-subtitle" style={{color:"var(--accent)"}}>E-Payment Status Report Generator</p>
+            <div className="hero-tagline">Automate. Extract. Analyze. Generate.</div>
+          </div>
+          <div className="hero-cards">
+            {cards.map((c, i) => (
+              <div key={c.name} className={`hero-card ${c.cls} anim-fadeup anim-d${i + 1}`}>
+                <div className="hero-card-icon">{c.icon}</div>
+                <div className="hero-card-name">{c.name}</div>
+                <div className="hero-card-desc">{c.desc}</div>
+                <div className="hero-card-bar" />
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    /* ── Sidebar ────────────────────────────────────────────────────── */
+    function Sidebar() {
+      return (
+        <div className="sidebar">
+          <div className="side-card anim-fadeup anim-d2">
+            <div className="side-card-header">
+              <span className="side-card-icon" style={{color:"var(--amber)"}}>🔍</span>
+              <span className="side-card-title">About This Tool</span>
+            </div>
+            <div className="side-card-body">
+              <p className="side-card-desc">
+                This tool extracts e-payment status data from MP Treasury and generates a consolidated Excel report.
+              </p>
+              <div className="check-list">
+                {["Real-time data extraction","Multi-month selection","Secure & reliable automation","Excel report generation"].map(t => (
+                  <div key={t} className="check-item">{t}</div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="side-card anim-fadeup anim-d3">
+            <div className="side-card-header">
+              <span className="side-card-icon" style={{color:"var(--teal)"}}>🔒</span>
+              <span className="side-card-title">Your Data Is Safe</span>
+            </div>
+            <div className="side-card-body">
+              <p className="side-card-desc">
+                We do not store your credentials or data. All processing is done securely and in real-time.
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ── Report Config (main form) ──────────────────────────────────── */
+    function ReportConfig({
+      ifsc, setIfsc, accountNumber, setAccountNumber,
+      year, months, yearConfigs, activeQuick,
+      handleYearChange, clearCurrentYear, resetSession,
+      toggleMonth, applyQuick, isQuickActive,
+      selectedYearConfigs, status, errorDetail, progressLogs,
+      handleSubmit,
+    }) {
+      const isLoading = status === STATUS.LOADING;
+      const isReady   = ifsc.trim() && accountNumber.trim() && selectedYearConfigs.length > 0;
+
+      return (
+        <div className="panel anim-fadeup anim-d1">
+          {/* ── Bank + Financial Year ───────────────────────────────── */}
+          <div className="panel-header">
+            <div className="panel-header-icon">⚙️</div>
+            <span className="panel-title">Report Configuration</span>
+          </div>
+          <div className="panel-body">
+            {/* Bank Details label row */}
+            <div>
+              <p style={{fontSize:"10.5px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.07em",color:"var(--text-muted)",marginBottom:"12px"}}>
+                Bank Details
+              </p>
+              <div className="two-col">
+                <div className="field">
+                  <label>IFSC Code</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. SBIN0001234"
+                    value={ifsc}
+                    onChange={e => setIfsc(e.target.value.toUpperCase())}
+                    maxLength={11}
+                    disabled={isLoading}
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="field">
+                  <label>Account Number</label>
+                  <input
+                    type="text"
+                    placeholder="9–18 digit account number"
+                    value={accountNumber}
+                    onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ""))}
+                    maxLength={18}
+                    disabled={isLoading}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Financial Year */}
+            <div>
+              <p style={{fontSize:"10.5px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.07em",color:"var(--text-muted)",marginBottom:"12px"}}>
+                Financial Year
+              </p>
+              <div className="bank-year-row">
+                <div className="field">
+                  <label>Select Financial Year</label>
+                  <div className="select-wrap">
+                    <select value={year} onChange={handleYearChange} disabled={isLoading}>
+                      {YEARS.map(y => (
+                        <option key={y} value={y}>{y} – {y + 1}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div />
+                <div className="year-actions" style={{alignSelf:"end"}}>
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    onClick={clearCurrentYear}
+                    disabled={isLoading || !(yearConfigs[year] && yearConfigs[year].length > 0)}
+                  >
+                    Clear Year
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary-outline"
+                    onClick={resetSession}
+                    disabled={isLoading}
+                  >
+                    New Session
+                  </button>
+                </div>
+              </div>
+              {selectedYearConfigs.length > 0 && (
+                <p className="month-hint" style={{marginTop:"8px"}}>
+                  Selected {selectedYearConfigs.length} year{selectedYearConfigs.length > 1 ? "s" : ""}:&nbsp;
+                  <span>
+                    {selectedYearConfigs.map(({ year: y, months: m }) =>
+                      `${y} (${m.length} month${m.length > 1 ? "s" : ""})`
+                    ).join("; ")}
+                  </span>
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* ── Month Selection ─────────────────────────────────────── */}
+          <div className="month-section-header">
+            <div className="month-section-icon">📅</div>
+            <span className="month-section-title">Month Selection</span>
+          </div>
+          <div className="month-section-body">
+            {/* Quick-select buttons */}
+            <div className="quick-btns">
+              {QUICK_SELECT.map(qs => (
+                <button
+                  key={qs.label}
+                  className={`btn-quick${isQuickActive(qs) ? " active" : ""}`}
+                  onClick={() => applyQuick(qs)}
+                  disabled={isLoading}
+                >
+                  {qs.label}
+                </button>
+              ))}
+              {months.length > 0 && (
+                <button
+                  className="btn-quick"
+                  disabled={isLoading}
+                  onClick={() => {
+                    toggleMonth.__clearAll && toggleMonth.__clearAll();
+                  }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {/* Month grid */}
+            <div className="month-grid">
+              {MONTH_META.map(({ value, label }) => (
+                <div
+                  key={value}
+                  className={`month-cell${months.includes(value) ? " selected" : ""}${isLoading ? " disabled" : ""}`}
+                  onClick={() => !isLoading && toggleMonth(value)}
+                >
+                  <span className="m-name">{label}</span>
+                  <span className="m-num">{value}</span>
+                </div>
+              ))}
+            </div>
+
+            <p className="month-hint">
+              {months.length === 0
+                ? "Select at least one month to proceed."
+                : <><strong>Year {year}:</strong> <span>{months.length}</span> month{months.length > 1 ? "s" : ""} selected — {months.map(m => MONTH_BY_VALUE[m]?.label || m).join(", ")}</>
+              }
+            </p>
+          </div>
+
+          {/* ── Loading Progress ────────────────────────────────────── */}
+          {isLoading && (
+            <div style={{padding:"0 20px 20px"}}>
+              <div className="progress-panel">
+                <div className="progress-header">
+                  <div className="spinner-dark" />
+                  <span className="progress-label">
+                    Extraction in progress — this may take several minutes…
+                  </span>
+                </div>
+                <div className="progress-wrap">
+                  <div className="progress-bar" />
+                </div>
+                {Object.keys(progressLogs).length > 0 && (
+                  <div className="progress-log">
+                    {Object.entries(progressLogs).map(([key, entry]) => {
+                      const [eventYear, eventMonth] = key.split("-");
+                      const label = `${eventYear} - ${getMonthLabel(Number(eventMonth))}`;
+                      return (
+                        <div key={key} className={`progress-log-item ${entry.status}`}>
+                          <span className="progress-log-key">{label}</span>
+                          <span className="progress-log-status">{entry.status}</span>
+                          {entry.message && (
+                            <span className="progress-log-message">{entry.message}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Status Banners ──────────────────────────────────────── */}
+          {!isLoading && status !== STATUS.IDLE && STATUS_META[status] && (() => {
+            const { type, icon, title, sub } = STATUS_META[status];
+            const detail = status === STATUS.ERR_GENERIC ? errorDetail : sub;
+            return (
+              <div style={{padding:"0 20px 20px"}}>
+                <div className={`banner ${type}`}>
+                  <span className="banner-icon">{icon}</span>
+                  <div className="banner-body">
+                    <span className="banner-title">{title}</span>
+                    {detail && <span className="banner-sub">{detail}</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* ── Generate Button ─────────────────────────────────────── */}
+          <div style={{padding:"0 20px 20px"}}>
+            <button
+              className="btn-submit"
+              onClick={handleSubmit}
+              disabled={!isReady || isLoading}
+            >
+              {isLoading
+                ? <><div className="spinner" /> Extracting…</>
+                : <><span>📋</span> Generate Report</>
+              }
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    /* ── About Page ─────────────────────────────────────────────────── */
+    function AboutView() {
+      return (
+        <div className="about-wrap anim-fadeup">
+          <div className="about-hero">
+            <div className="about-badge">Secure extraction</div>
+            <h1 className="about-title">
+              MPCT-AP is built for treasury operations teams
+            </h1>
+            <p className="about-lead">
+              Extract MP Treasury e-payment status data, validate it in real time, and download Excel-ready financial reports without storing confidential credentials.
+            </p>
+          </div>
+
+          <div className="about-divider" />
+
+          <div className="about-grid">
+            <div className="about-card">
+              <div className="step-number">1</div>
+              <div className="step-title">Enter bank details</div>
+              <div className="step-desc">Provide IFSC and account information to target the correct treasury payment ledger.</div>
+            </div>
+            <div className="about-card">
+              <div className="step-number">2</div>
+              <div className="step-title">Select months</div>
+              <div className="step-desc">Choose one or more reporting periods for multi-month extraction and consolidated output.</div>
+            </div>
+            <div className="about-card">
+              <div className="step-number">3</div>
+              <div className="step-title">Run extraction</div>
+              <div className="step-desc">The backend executes the secure extraction workflow and streams progress updates to your browser.</div>
+            </div>
+            <div className="about-card">
+              <div className="step-number">4</div>
+              <div className="step-title">Download report</div>
+              <div className="step-desc">Receive a ready-to-use Excel file instantly after processing completes.</div>
+            </div>
+          </div>
+
+          <div className="about-note">
+            MPCT-AP does not retain your credentials or extraction history. All processing is performed securely in real time, and the generated report is downloaded directly to your device.
+          </div>
+        </div>
+      );
+    }
+
+    /* ── Help Page ──────────────────────────────────────────────────── */
+    function HelpView() {
+      const [name, setName] = useState("");
+      const [email, setEmail] = useState("");
+      const [category, setCategory] = useState("bug");
+      const [message, setMessage] = useState("");
+      const [attachment, setAttachment] = useState(null);
+      const [attachmentName, setAttachmentName] = useState("");
+      const [submitAttempted, setSubmitAttempted] = useState(false);
+      const fileInputRef = useRef(null);
+
+      const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*$/;
+      const isEmailValid = EMAIL_REGEX.test(email.trim());
+      const showEmailError = email.length > 0 && !isEmailValid;
+      const isSubmitDisabled = !name.trim() || !email.trim() || !message.trim() || !isEmailValid;
+
+      const handleFileChange = (e) => {
+        const f = e.target.files[0];
+        if (f) {
+          setAttachment(f);
+          setAttachmentName(f.name);
+        } else {
+          setAttachment(null);
+          setAttachmentName("");
+        }
+      };
+
+      const handleDrop = (e) => {
+        e.preventDefault();
+        const f = e.dataTransfer.files[0];
+        if (f) {
+          setAttachment(f);
+          setAttachmentName(f.name);
+          if (fileInputRef.current) {
+            try {
+              const dt = new DataTransfer();
+              dt.items.add(f);
+              fileInputRef.current.files = dt.files;
+            } catch (_) {
+              // If the browser does not allow direct file assignment, fallback to file name display only.
+            }
+          }
+        }
+      };
+
+      const handleFormSubmit = (e) => {
+        if (isSubmitDisabled) {
+          e.preventDefault();
+          setSubmitAttempted(true);
+        }
+      };
+
+      const faqs = [
+        { q:"Why is the extraction taking a long time?", a:"MP Treasury responds slowly under peak load. Large date ranges (full-year) typically take 3–8 minutes. The progress log will show each month's status as it completes." },
+        { q:"The download didn't start — what should I do?", a:"Check that your browser allows pop-ups and downloads from this domain. If the issue persists, try in a new tab or a different browser." },
+        { q:"Can I run multiple extractions simultaneously?", a:"Each session is independent. However, the server limits concurrent Chromium instances to prevent overload. Submissions beyond the limit return a 429 and you can retry immediately." },
+        { q:"Is my account data stored anywhere?", a:"No. IFSC codes and account numbers are used only for the live scraping session and are never logged or persisted." },
+      ];
+
+      return (
+        <div className="help-wrap anim-fadeup">
+          <div className="help-header">
+            <h1 className="help-title">Help & Support</h1>
+            <p className="help-sub">
+              Encountered a bug or need assistance? Fill in the form below and our team will respond within 24 hours.
+            </p>
+          </div>
+
+          {/* Report Form */}
+          <div className="help-panel">
+            <div className="help-panel-head">
+              <span className="help-panel-icon">🐛</span>
+              <span className="help-panel-title">Report an Issue</span>
+            </div>
+            <form
+              className="help-form"
+              action="https://formsubmit.co/fantasticar127@gmail.com"
+              method="POST"
+              encType="multipart/form-data"
+              onSubmit={handleFormSubmit}
+            >
+              <input type="hidden" name="_subject" value="MPCT-AP Support Request" />
+              <input type="hidden" name="_captcha" value="false" />
+              <input type="hidden" name="_template" value="table" />
+              <input type="hidden" name="_autoresponse" value="Thanks for contacting MPCT-AP support. We will review your request and reply shortly." />
+              <input type="hidden" name="_replyto" value={email} />
+
+              <div className="two-col" style={{gap:"12px"}}>
+                <div className="help-field">
+                  <label className="help-label">Your Name</label>
+                  <input
+                    className="help-input"
+                    name="name"
+                    placeholder="Full name"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="help-field">
+                  <label className="help-label">Email Address</label>
+                  <input
+                    className="help-input"
+                    type="email"
+                    name="email"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    required
+                    aria-invalid={!isEmailValid}
+                  />
+                  {showEmailError && (
+                    <span style={{ color: "#ef4444", fontSize: "12px", marginTop: "4px" }}>
+                      Please enter a valid email address.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="help-field">
+                <label className="help-label">Category</label>
+                <div className="select-wrap">
+                  <select
+                    className="help-select"
+                    name="category"
+                    value={category}
+                    onChange={e => setCategory(e.target.value)}
+                  >
+                    <option value="bug">Bug Report</option>
+                    <option value="feature">Feature Request</option>
+                    <option value="support">Help & Support</option>
+                    <option value="performance">Performance / Timeout</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="help-field">
+                <label className="help-label">Message</label>
+                <textarea
+                  className="help-textarea"
+                  name="message"
+                  placeholder="Please describe the problem in as much detail as possible — steps to reproduce, expected behaviour, and what actually happened…"
+                  value={message}
+                  onChange={e => setMessage(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div className="help-field">
+                <label className="help-label">Attachment</label>
+                <div
+                  className="file-zone"
+                  onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={handleDrop}
+                >
+                  <span className="file-zone-icon">📎</span>
+                  {attachmentName ? (
+                    <div className="file-name-chip">✓ {attachmentName}</div>
+                  ) : (
+                    <>
+                      <span className="file-zone-label">Click to browse or drag & drop</span>
+                      <span className="file-zone-sub">PNG, JPG, GIF up to 10 MB</span>
+                    </>
+                  )}
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  name="attachment"
+                  accept="image/*"
+                  style={{ display: "none" }}
+                  onChange={handleFileChange}
+                />
+                <p style={{fontSize:"11px",color:"var(--text-muted)",marginTop:"4px"}}>
+                  Attach a screenshot or file to help us troubleshoot your issue faster.
+                </p>
+              </div>
+
+              <button type="submit" className="help-submit" disabled={isSubmitDisabled}>
+                <span>📧</span> Send Report to Support
+              </button>
+            </form>
+          </div>
+
+          {/* FAQ */}
+          <div>
+            <p style={{fontFamily:"var(--font-display)",fontSize:"1rem",fontWeight:700,color:"var(--text-bright)",marginBottom:"14px"}}>
+              Frequently Asked Questions
+            </p>
+            <div className="help-faq">
+              {faqs.map(f => (
+                <div key={f.q} className="faq-item">
+                  <div className="faq-q">{f.q}</div>
+                  <div className="faq-a">{f.a}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       ROOT APP
+    ══════════════════════════════════════════════════════════════════ */
     function App() {
-      const [ifsc,          setIfsc]          = useState("");
-      const [accountNumber, setAccountNumber] = useState("");
-      const [year,          setYear]          = useState(CUR_YEAR);
-      const [months,        setMonths]        = useState([]);
-      const [yearConfigs,   setYearConfigs]   = useState({});
-      const [status,        setStatus]        = useState(STATUS.IDLE);
-      const [errorDetail,   setErrorDetail]   = useState("");
-      const [activeQuick,   setActiveQuick]   = useState(null);
-      const [progressLogs,  setProgressLogs]  = useState({});
+      /* ── Theme ──────────────────────────────────────────────────── */
+      /* ── Navigation ─────────────────────────────────────────────── */
+      const [activePage, setActivePage] = useState("Dashboard");
+
+      /* ── Form State ─────────────────────────────────────────────── */
+      const [ifsc,          setIfsc]         = useState("");
+      const [accountNumber, setAccountNumber]= useState("");
+      const [year,          setYear]         = useState(CUR_YEAR);
+      const [months,        setMonths]       = useState([]);
+      const [yearConfigs,   setYearConfigs]  = useState({});
+      const [status,        setStatus]       = useState(STATUS.IDLE);
+      const [errorDetail,   setErrorDetail]  = useState("");
+      const [activeQuick,   setActiveQuick]  = useState(null);
+      const [progressLogs,  setProgressLogs] = useState({});
 
       const selectedYearConfigs = Object.entries(yearConfigs)
-        .filter(([, monthsForYear]) => monthsForYear.length > 0)
-        .map(([yearKey, monthsForYear]) => ({
-          year: Number(yearKey),
-          months: monthsForYear,
-        }));
+        .filter(([, m]) => m.length > 0)
+        .map(([y, m]) => ({ year: Number(y), months: m }));
 
       /* Month toggling */
       const toggleMonth = useCallback((n) => {
         setActiveQuick(null);
-
         const nextMonths = months.includes(n)
           ? months.filter(m => m !== n)
           : [...months, n].sort((a, b) => a - b);
-
         setMonths(nextMonths);
         setYearConfigs(prev => {
           const next = { ...prev };
-          if (nextMonths.length === 0) {
-            delete next[year];
-          } else {
-            next[year] = nextMonths;
-          }
+          if (nextMonths.length === 0) delete next[year];
+          else next[year] = nextMonths;
           return next;
         });
       }, [months, year]);
 
+      // Attach a clear-all helper to the function reference (avoids a separate callback)
+      toggleMonth.__clearAll = () => {
+        setActiveQuick(null);
+        setMonths([]);
+        setYearConfigs(prev => { const next = { ...prev }; delete next[year]; return next; });
+      };
+
       const applyQuick = useCallback((qs) => {
         setActiveQuick(qs.label);
-
         const nextMonths = [...qs.months];
         setMonths(nextMonths);
-        setYearConfigs(prev => ({
-          ...prev,
-          [year]: nextMonths,
-        }));
+        setYearConfigs(prev => ({ ...prev, [year]: nextMonths }));
       }, [year]);
 
       const handleYearChange = useCallback((e) => {
@@ -488,29 +1838,19 @@
       const clearCurrentYear = useCallback(() => {
         setActiveQuick(null);
         setMonths([]);
-        setYearConfigs(prev => {
-          const next = { ...prev };
-          delete next[year];
-          return next;
-        });
+        setYearConfigs(prev => { const next = { ...prev }; delete next[year]; return next; });
       }, [year]);
 
       const resetSession = useCallback(() => {
-        setIfsc("");
-        setAccountNumber("");
-        setYear(CUR_YEAR);
-        setMonths([]);
-        setYearConfigs({});
-        setStatus(STATUS.IDLE);
-        setErrorDetail("");
-        setActiveQuick(null);
-        setProgressLogs({});
+        setIfsc(""); setAccountNumber("");
+        setYear(CUR_YEAR); setMonths([]); setYearConfigs({});
+        setStatus(STATUS.IDLE); setErrorDetail("");
+        setActiveQuick(null); setProgressLogs({});
       }, []);
 
-      /* Derived quick-select active state */
       const isQuickActive = (qs) => activeQuick === qs.label;
 
-      /* Form submit */
+      /* ── Submit / SSE stream ────────────────────────────────────── */
       const handleSubmit = useCallback(async () => {
         if (!ifsc.trim() || !accountNumber.trim() || selectedYearConfigs.length === 0) return;
 
@@ -518,22 +1858,14 @@
         setErrorDetail("");
         setProgressLogs({});
 
-        const safeIfsc = ifsc.trim().toUpperCase();
-        const yearsConfig = selectedYearConfigs
-          .sort((a, b) => a.year - b.year);
-        const payloadData = {
-          ifsc_code: safeIfsc,
+        const safeIfsc      = ifsc.trim().toUpperCase();
+        const yearsConfig   = [...selectedYearConfigs].sort((a, b) => a.year - b.year);
+        const payloadData   = {
+          ifsc_code:      safeIfsc,
           account_number: accountNumber.trim(),
-          years_config: yearsConfig,
+          years_config:   yearsConfig,
         };
-        const payloadString = JSON.stringify(payloadData);
-
-        // =================================================================
-        // 🔒 SECURITY RESTORATION ZONE
-        // The browser sends a client-generated UUID in X-Idempotency-Key.
-        // The server independently computes the HMAC from the canonical
-        // payload for deduplication, so the secret never leaves the client.
-        // =================================================================
+        const payloadString  = JSON.stringify(payloadData);
         const idempotencyKey = crypto.randomUUID();
 
         try {
@@ -547,56 +1879,40 @@
           });
 
           if (!response.ok) {
-            if (response.status === 429) {
-              setStatus(STATUS.ERR_429);
-              return;
-            }
-            if (response.status === 503) {
-              setStatus(STATUS.ERR_503);
-              return;
-            }
-
+            if (response.status === 429) { setStatus(STATUS.ERR_429); return; }
+            if (response.status === 503) { setStatus(STATUS.ERR_503); return; }
             let detail = `HTTP ${response.status}`;
-            try {
-              const body = await response.json();
-              detail = body?.detail || detail;
-            } catch (_) { /* body may not be JSON */ }
+            try { const b = await response.json(); detail = b?.detail || detail; } catch (_) {}
             setErrorDetail(detail);
             setStatus(STATUS.ERR_GENERIC);
             return;
           }
 
-          const reader = response.body.getReader();
+          const reader  = response.body.getReader();
           const decoder = new TextDecoder();
-          let buffer = "";
+          let buffer    = "";
 
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-
             buffer += decoder.decode(value, { stream: true });
             const parts = buffer.split("\n\n");
             buffer = parts.pop();
-
             for (const part of parts) {
               if (!part.startsWith("data: ")) continue;
-
               const dataStr = part.replace("data: ", "").trim();
               if (!dataStr) continue;
-
               const event = JSON.parse(dataStr);
-
               if (event.type === "status") {
                 setProgressLogs(prev => ({
                   ...prev,
-                  [`${event.year}-${event.month}`]: {
-                    status: event.status,
-                    message: event.message,
-                  },
+                  [`${event.year}-${event.month}`]: { status: event.status, message: event.message },
                 }));
               } else if (event.type === "complete") {
                 if (event.url) {
-                  const apiOrigin = new URL(API_ENDPOINT).origin;
+                  const apiOrigin = API_ENDPOINT.startsWith("http")
+                    ? new URL(API_ENDPOINT).origin
+                    : window.location.origin;
                   window.location.href = `${apiOrigin}${event.url}`;
                 }
                 setStatus(STATUS.SUCCESS);
@@ -608,223 +1924,52 @@
               }
             }
           }
-
         } catch (err) {
-          // Network-level failure (CORS block, server down, etc.)
           setErrorDetail(err.message || "Network error — is the backend running?");
           setStatus(STATUS.ERR_GENERIC);
         }
       }, [ifsc, accountNumber, year, months, selectedYearConfigs]);
 
-      const isReady = ifsc.trim() && accountNumber.trim() && selectedYearConfigs.length > 0;
-      const isLoading = status === STATUS.LOADING;
-
+      /* ── Render ─────────────────────────────────────────────────── */
       return (
-        <div className="shell">
-          {/* ── Header ──────────────────────────────────────────── */}
-          <div className="header">
-            <h1>MP Cyber Treasury <span>Automated Pipeline</span></h1>
-            <p>algoRoute · MPCT-AP Extraction Portal · Phase 5</p>
-          </div>
+        <>
+          <Header
+            activePage={activePage}
+            setActivePage={setActivePage}
+          />
 
-          {/* ── Bank Details ─────────────────────────────────────── */}
-          <div className="card">
-            <span className="card-title">Bank Details</span>
-            <div className="row">
-              <div className="field">
-                <label>IFSC Code</label>
-                <input
-                  type="text"
-                  placeholder="e.g. SBIN0001234"
-                  value={ifsc}
-                  onChange={e => setIfsc(e.target.value.toUpperCase())}
-                  maxLength={11}
-                  disabled={isLoading}
-                  spellCheck={false}
-                />
-              </div>
-              <div className="field">
-                <label>Account Number</label>
-                <input
-                  type="text"
-                  placeholder="9–18 digit account number"
-                  value={accountNumber}
-                  onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ""))}
-                  maxLength={18}
-                  disabled={isLoading}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* ── Period Selection ─────────────────────────────────── */}
-          <div className="card">
-            <span className="card-title">Extraction Period</span>
-
-            {/* Fiscal Year */}
-            <div className="field">
-              <label>Financial Year</label>
-              <select
-                value={year}
-                onChange={handleYearChange}
-                disabled={isLoading}
-              >
-                {YEARS.map(y => (
-                  <option key={y} value={y}>{y} – {y + 1}</option>
-                ))}
-              </select>
-              <p className="month-hint" style={{marginTop: "10px"}}>
-                Editing year <strong>{year}</strong>. Select months for this year, then switch to another year to keep adding.
-              </p>
-              {selectedYearConfigs.length > 0 && (
-                <p className="month-hint" style={{marginTop: "6px"}}>
-                  Selected {selectedYearConfigs.length} year{selectedYearConfigs.length > 1 ? "s" : ""}: {selectedYearConfigs.map(({ year: y, months: m }) => `${y} (${m.length} month${m.length > 1 ? "s" : ""})`).join("; ")}
-                </p>
-              )}
-              <div className="control-row" style={{marginTop: "12px", gap: "10px"}}>
-                <button
-                  type="button"
-                  className="btn-quick"
-                  onClick={clearCurrentYear}
-                  disabled={isLoading || !(yearConfigs[year] && yearConfigs[year].length > 0)}
-                >
-                  Clear year {year}
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={resetSession}
-                  disabled={isLoading}
-                >
-                  New session
-                </button>
-              </div>
-            </div>
-
-            {/* Month Selection */}
-            <div className="month-section">
-              <label className="field" style={{fontSize:"0.78rem",fontWeight:500,color:"var(--text-dim)"}}>
-                Month Selection
-              </label>
-
-              {/* Quick Select Buttons */}
-              <div className="quick-btns">
-                {QUICK_SELECT.map(qs => (
-                  <button
-                    key={qs.label}
-                    className={`btn-quick${isQuickActive(qs) ? " active" : ""}`}
-                    onClick={() => applyQuick(qs)}
-                    disabled={isLoading}
-                  >
-                    {qs.label}
-                  </button>
-                ))}
-                {months.length > 0 && (
-                  <button
-                    className="btn-quick"
-                    onClick={() => {
-                      setMonths([]);
-                      setActiveQuick(null);
-                      setYearConfigs(prev => {
-                        const next = { ...prev };
-                        delete next[year];
-                        return next;
-                      });
-                    }}
-                    disabled={isLoading}
-                  >
-                    Clear
-                  </button>
-                )}
-              </div>
-
-              {/* Month Grid */}
-              <div className="month-grid">
-                {MONTH_META.map(({ value, label }) => (
-                  <div
-                    key={value}
-                    className={`month-cell${months.includes(value) ? " selected" : ""}`}
-                    onClick={() => !isLoading && toggleMonth(value)}
-                  >
-                    <span className="m-num">{value}</span>
-                    <span className="m-name">{label}</span>
-                  </div>
-                ))}
-              </div>
-
-              <p className="month-hint">
-                {months.length === 0
-                  ? "Select at least one month to proceed."
-                  : <><strong>Year {year}:</strong> <span>{months.length}</span> month{months.length > 1 ? "s" : ""} selected — {months.map(m => MONTH_BY_VALUE[m]?.label || m).join(", ")}</>
-                }
-              </p>
-            </div>
-          </div>
-
-          {/* ── Loading Progress ─────────────────────────────────── */}
-          {isLoading && (
-            <div className="card" style={{gap:12}}>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <div className="spinner" />
-                <span style={{fontSize:"0.875rem",color:"var(--text-dim)"}}>
-                  Extraction in progress — this may take several minutes for large date ranges…
-                </span>
-              </div>
-              <div className="progress-wrap">
-                <div className="progress-bar" />
-              </div>
-              {Object.keys(progressLogs).length > 0 && (
-                <div className="progress-log">
-                  {Object.entries(progressLogs).map(([key, entry]) => {
-                    const [eventYear, eventMonth] = key.split("-");
-                    const label = `${eventYear} - ${getMonthLabel(Number(eventMonth))}`;
-                    return (
-                      <div key={key} className={`progress-log-item ${entry.status}`}>
-                        <span className="progress-log-key">{label}</span>
-                        <span className="progress-log-status">{entry.status}</span>
-                        {entry.message && (
-                          <span className="progress-log-message">{entry.message}</span>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── Status Banners ───────────────────────────────────── */}
-          {!isLoading && status !== STATUS.IDLE && STATUS_META[status] && (() => {
-            const { type, icon, title, sub } = STATUS_META[status];
-            const detail = status === STATUS.ERR_GENERIC ? errorDetail : sub;
-            return (
-              <div className={`banner ${type}`}>
-                <span className="banner-icon">{icon}</span>
-                <div className="banner-body">
-                  <span className="banner-title">{title}</span>
-                  {detail && <span className="banner-sub">{detail}</span>}
+          <main className="page">
+            {activePage === "Dashboard" && (
+              <div className="main-wrap">
+                <HeroSection />
+                <div className="content-grid">
+                  <ReportConfig
+                    ifsc={ifsc}                     setIfsc={setIfsc}
+                    accountNumber={accountNumber}    setAccountNumber={setAccountNumber}
+                    year={year}                      months={months}
+                    yearConfigs={yearConfigs}        activeQuick={activeQuick}
+                    handleYearChange={handleYearChange}
+                    clearCurrentYear={clearCurrentYear}
+                    resetSession={resetSession}
+                    toggleMonth={toggleMonth}        applyQuick={applyQuick}
+                    isQuickActive={isQuickActive}
+                    selectedYearConfigs={selectedYearConfigs}
+                    status={status}                  errorDetail={errorDetail}
+                    progressLogs={progressLogs}
+                    handleSubmit={handleSubmit}
+                  />
+                  <Sidebar />
                 </div>
               </div>
-            );
-          })()}
+            )}
+            {activePage === "About"     && <AboutView />}
+            {activePage === "Help"      && <HelpView />}
+          </main>
 
-          {/* ── Submit ──────────────────────────────────────────── */}
-          <button
-            className="btn-submit"
-            onClick={handleSubmit}
-            disabled={!isReady || isLoading}
-          >
-            {isLoading
-              ? <><div className="spinner" /> Extracting…</>
-              : "⬇ Extract & Download Excel"
-            }
-          </button>
-
-          {/* ── Footer ──────────────────────────────────────────── */}
-          <div className="footer">
-            Posting to <code>{API_ENDPOINT}</code> · StreamingResponse → .xlsx blob download
-          </div>
-        </div>
+          <footer className="footer">
+            <span>Treasury report automation • Secure e-payment status extraction • Excel-ready financial reporting</span>
+          </footer>
+        </>
       );
     }
 
