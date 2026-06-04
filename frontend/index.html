@@ -3,12 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MPCT-AP · E-Payment Status Report Generator</title>
 
   <!-- React + Babel via CDN (no build step required) -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <title>MP Treasury E-Challan Reporting System · E-Payment Status Report Generator</title>
 
   <!-- Google Fonts: Syne (display) + DM Sans (body) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -1164,7 +1165,7 @@
     };
 
     const STATUS_META = {
-      [STATUS.SUCCESS]:     { type: "success", icon: "✓", title: "Extraction complete",         sub: "Your Excel file has been downloaded." },
+      [STATUS.SUCCESS]:     { type: "success", icon: "✓", title: "Extraction complete",         sub: "Saved to the MPCT-AP Results folder in your Documents!" },
       [STATUS.ERR_429]:     { type: "warn",    icon: "⏳", title: "Queue full — retry shortly", sub: "The extraction queue is at capacity. Please wait a few seconds and submit again." },
       [STATUS.ERR_503]:     { type: "error",   icon: "⚠",  title: "Service unavailable",        sub: "The automation engine is currently unhealthy. Please retry later." },
       [STATUS.ERR_GENERIC]: { type: "error",   icon: "✕", title: "Request failed",              sub: "" },
@@ -1194,7 +1195,7 @@
           <div className="nav-brand">
             <div className="nav-logo">🏛️</div>
             <div className="nav-brand-text">
-              <span className="nav-brand-title">MPCT-AP</span>
+              <span className="nav-brand-title">MP Treasury E-Challan Reporting System</span>
               <span className="nav-brand-sub">E-Payment Status Report Generator</span>
             </div>
           </div>
@@ -1248,10 +1249,9 @@
         <div className="hero anim-fadeup">
           <div className="hero-text">
             <h1 className="hero-title">
-              Welcome to <span className="accent">MPCT-AP</span> 🏛️
+              MP Treasury <span className="accent">E-Challan</span><br />Reporting System 🏛️
             </h1>
-            <p className="hero-subtitle">MP Cyber Treasury Automated Pipeline</p>
-            <p className="hero-subtitle" style={{color:"var(--accent)"}}>E-Payment Status Report Generator</p>
+            <p className="hero-subtitle">E-Payment Status Report Generator</p>
             <div className="hero-tagline">Automate. Extract. Analyze. Generate.</div>
           </div>
           <div className="hero-cards">
@@ -1533,7 +1533,7 @@
           <div className="about-hero">
             <div className="about-badge">Secure extraction</div>
             <h1 className="about-title">
-              MPCT-AP is built for treasury operations teams
+              MP Treasury E-Challan Reporting System is built for treasury operations teams
             </h1>
             <p className="about-lead">
               Extract MP Treasury e-payment status data, validate it in real time, and download Excel-ready financial reports without storing confidential credentials.
@@ -1566,7 +1566,7 @@
           </div>
 
           <div className="about-note">
-            MPCT-AP does not retain your credentials or extraction history. All processing is performed securely in real time, and the generated report is downloaded directly to your device.
+            MP Treasury E-Challan Reporting System does not retain your credentials or extraction history. All processing is performed securely in real time, and the generated report is downloaded directly to your device.
           </div>
         </div>
       );
@@ -1653,10 +1653,10 @@
               encType="multipart/form-data"
               onSubmit={handleFormSubmit}
             >
-              <input type="hidden" name="_subject" value="MPCT-AP Support Request" />
+              <input type="hidden" name="_subject" value="MP Treasury E-Challan Reporting System Support Request" />
               <input type="hidden" name="_captcha" value="false" />
               <input type="hidden" name="_template" value="table" />
-              <input type="hidden" name="_autoresponse" value="Thanks for contacting MPCT-AP support. We will review your request and reply shortly." />
+              <input type="hidden" name="_autoresponse" value="Thanks for contacting MP Treasury E-Challan Reporting System support. We will review your request and reply shortly." />
               <input type="hidden" name="_replyto" value={email} />
 
               <div className="two-col" style={{gap:"12px"}}>

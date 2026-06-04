@@ -52,8 +52,11 @@ import asyncio
 import io
 import json
 import logging
+import os
+import sys
 import time
 import uuid
+from pathlib import Path
 from typing import AsyncGenerator
 
 import pandas as pd
@@ -105,6 +108,23 @@ def _store_download(session_id: str, xlsx_bytes: bytes, filename: str) -> None:
         "filename":   filename,
         "created_at": now,
     }
+
+
+def get_executable_dir():
+    """Get the directory where the actual .exe file lives, or the script root if running raw."""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def save_dataframe_to_local_results(df: pd.DataFrame, filename="treasury_report.xlsx") -> str:
+    """Saves the Excel file to a 'MPCT-AP Results' folder in the user's Documents."""
+    documents_folder = os.path.join(Path.home(), "Documents")
+    results_dir = os.path.join(documents_folder, "MPCT-AP Results")
+    os.makedirs(results_dir, exist_ok=True)
+    full_path = os.path.join(results_dir, filename)
+    df.to_excel(full_path, index=False)
+    return full_path
 
 logger = logging.getLogger(__name__)
 
@@ -365,27 +385,29 @@ async def submit_extraction(
             return
 
         # Convert numeric month values to short names for the final Excel export.
-        if "month" in result_df.columns:
-            month_names = {
-                1: "Jan",
-                2: "Feb",
-                3: "Mar",
-                4: "Apr",
-                5: "May",
-                6: "Jun",
-                7: "Jul",
-                8: "Aug",
-                9: "Sep",
-                10: "Oct",
-                11: "Nov",
-                12: "Dec",
-            }
-            try:
-                result_df = result_df.copy()
+        month_names = {
+            1: "Jan",
+            2: "Feb",
+            3: "Mar",
+            4: "Apr",
+            5: "May",
+            6: "Jun",
+            7: "Jul",
+            8: "Aug",
+            9: "Sep",
+            10: "Oct",
+            11: "Nov",
+            12: "Dec",
+        }
+        try:
+            result_df = result_df.copy()
+            if "month" in result_df.columns:
                 result_df["month"] = result_df["month"].astype(int).map(month_names).fillna(result_df["month"])
-            except Exception:
-                # If the month column cannot be converted cleanly, leave it as-is.
-                pass
+            if "Month" in result_df.columns:
+                result_df["Month"] = result_df["Month"].astype(int).map(month_names).fillna(result_df["Month"])
+        except Exception:
+            # If the month column cannot be converted cleanly, leave it as-is.
+            pass
 
         # Serialize to .xlsx on a background thread.
         def _write_excel() -> bytes:
@@ -399,10 +421,11 @@ async def submit_extraction(
         year_tags = "_".join(str(yc.year) for yc in body.years_config)
         filename  = f"treasury_{body.ifsc_code}_{year_tags}.xlsx"
 
+        saved_path = await asyncio.to_thread(save_dataframe_to_local_results, result_df, filename)
         _store_download(session_id, xlsx_bytes, filename)
         logger.info(
-            "[ENDPOINT] Task %s stored %d bytes under session_id=%s.",
-            task_id, len(xlsx_bytes), session_id,
+            "[ENDPOINT] Task %s saved Excel to %s and stored %d bytes under session_id=%s.",
+            task_id, saved_path, len(xlsx_bytes), session_id,
         )
 
         yield f"data: {json.dumps({'type': 'complete', 'url': f'/api/v1/download/{session_id}', 'rows': len(result_df)})}\n\n"
