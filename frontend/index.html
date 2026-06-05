@@ -9,7 +9,7 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  <title>MP Treasury E-Challan Reporting System · E-Payment Status Report Generator</title>
+  <title>M.P Cyber Treasury · E-Payment Status Report Generator</title>
 
   <!-- Google Fonts: Syne (display) + DM Sans (body) -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -1144,16 +1144,10 @@
     const MONTH_BY_VALUE = Object.fromEntries(MONTH_META.map(m => [m.value, m]));
     const getMonthLabel  = (value) => MONTH_BY_VALUE[value]?.label || String(value);
 
-    const QUICK_SELECT = [
-      { label: "Q1 (Apr–Jun)",  months: [4, 5, 6]  },
-      { label: "Q2 (Jul–Sep)",  months: [7, 8, 9]  },
-      { label: "Q3 (Oct–Dec)",  months: [10, 11, 12] },
-      { label: "Q4 (Jan–Mar)",  months: [1, 2, 3] },
-      { label: "Select All",    months: MONTH_META.map(m => m.value) },
-    ];
-
-    const CUR_YEAR = new Date().getFullYear();
-    const YEARS    = Array.from({ length: 11 }, (_, i) => CUR_YEAR - 5 + i);
+    // Fixed Context Time: June 2026
+    const SYSTEM_CURRENT_YEAR = 2026;
+    const SYSTEM_CURRENT_MONTH = 6;
+    const BASE_YEARS = Array.from({ length: 11 }, (_, i) => SYSTEM_CURRENT_YEAR - 5 + i);
 
     const STATUS = {
       IDLE:        "idle",
@@ -1165,7 +1159,7 @@
     };
 
     const STATUS_META = {
-      [STATUS.SUCCESS]:     { type: "success", icon: "✓", title: "Extraction complete",         sub: "Saved to the MPCT-AP Results folder in your Documents!" },
+      [STATUS.SUCCESS]:     { type: "success", icon: "✓", title: "Extraction complete",         sub: "Saved to your Desktop and opened automatically." },
       [STATUS.ERR_429]:     { type: "warn",    icon: "⏳", title: "Queue full — retry shortly", sub: "The extraction queue is at capacity. Please wait a few seconds and submit again." },
       [STATUS.ERR_503]:     { type: "error",   icon: "⚠",  title: "Service unavailable",        sub: "The automation engine is currently unhealthy. Please retry later." },
       [STATUS.ERR_GENERIC]: { type: "error",   icon: "✕", title: "Request failed",              sub: "" },
@@ -1188,30 +1182,15 @@
     ══════════════════════════════════════════════════════════════════ */
 
     /* ── Top Navigation ─────────────────────────────────────────────── */
-    function Header({ activePage, setActivePage }) {
-      const links = ["Dashboard", "About", "Help"];
+    function Header() {
       return (
         <nav className="topnav">
           <div className="nav-brand">
             <div className="nav-logo">🏛️</div>
             <div className="nav-brand-text">
-              <span className="nav-brand-title">MP Treasury E-Challan Reporting System</span>
+              <span className="nav-brand-title">M.P Cyber Treasury</span>
               <span className="nav-brand-sub">E-Payment Status Report Generator</span>
             </div>
-          </div>
-
-          <div className="nav-links">
-            {links.map((l, i) => (
-              <React.Fragment key={l}>
-                {i === links.length - 1 && <div className="nav-dot" />}
-                <button
-                  className={`nav-link${activePage === l ? " active" : ""}`}
-                  onClick={() => setActivePage(l)}
-                >
-                  {l}
-                </button>
-              </React.Fragment>
-            ))}
           </div>
         </nav>
       );
@@ -1249,9 +1228,12 @@
         <div className="hero anim-fadeup">
           <div className="hero-text">
             <h1 className="hero-title">
-              MP Treasury <span className="accent">E-Challan</span><br />Reporting System 🏛️
+              M.P Cyber Treasury 🏛️
             </h1>
             <p className="hero-subtitle">E-Payment Status Report Generator</p>
+            <p className="hero-subtitle" style={{marginTop:"4px", fontSize:"12px", color:"var(--text-dim)"}}>
+              Developed By Arman Ojha
+            </p>
             <div className="hero-tagline">Automate. Extract. Analyze. Generate.</div>
           </div>
           <div className="hero-cards">
@@ -1307,24 +1289,38 @@
     /* ── Report Config (main form) ──────────────────────────────────── */
     function ReportConfig({
       ifsc, setIfsc, accountNumber, setAccountNumber,
-      year, months, yearConfigs, activeQuick,
-      handleYearChange, clearCurrentYear, resetSession,
-      toggleMonth, applyQuick, isQuickActive,
-      selectedYearConfigs, status, errorDetail, progressLogs,
-      handleSubmit,
+      isMultiYear, setIsMultiYear, singleYear, setSingleYear,
+      fromYear, setFromYear, toYear, setToYear,
+      months, toggleMonth, selectAllMonths, clearMonths,
+      resetSession, status, errorDetail, progressLogs, handleSubmit,
+      isMonthDisabled,
     }) {
       const isLoading = status === STATUS.LOADING;
-      const isReady   = ifsc.trim() && accountNumber.trim() && selectedYearConfigs.length > 0;
+      const isReady = ifsc.trim() && accountNumber.trim() && (isMultiYear || months.length > 0);
 
       return (
         <div className="panel anim-fadeup anim-d1">
-          {/* ── Bank + Financial Year ───────────────────────────────── */}
           <div className="panel-header">
             <div className="panel-header-icon">⚙️</div>
             <span className="panel-title">Report Configuration</span>
           </div>
           <div className="panel-body">
-            {/* Bank Details label row */}
+            <div style={{marginBottom:"16px"}}>
+              <button
+                type="button"
+                className="btn-outline"
+                onClick={() => {
+                  if (!isLoading) {
+                    setIsMultiYear(!isMultiYear);
+                    clearMonths();
+                  }
+                }}
+                disabled={isLoading}
+              >
+                {isMultiYear ? "🔄 Switch to Single Year" : "📅 Enable Multi-Year Range"}
+              </button>
+            </div>
+
             <div>
               <p style={{fontSize:"10.5px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.07em",color:"var(--text-muted)",marginBottom:"12px"}}>
                 Bank Details
@@ -1356,109 +1352,143 @@
               </div>
             </div>
 
-            {/* Financial Year */}
-            <div>
+            <div style={{marginTop:"24px"}}>
               <p style={{fontSize:"10.5px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.07em",color:"var(--text-muted)",marginBottom:"12px"}}>
-                Financial Year
+                Timeline Range
               </p>
-              <div className="bank-year-row">
-                <div className="field">
-                  <label>Select Financial Year</label>
-                  <div className="select-wrap">
-                    <select value={year} onChange={handleYearChange} disabled={isLoading}>
-                      {YEARS.map(y => (
-                        <option key={y} value={y}>{y} – {y + 1}</option>
-                      ))}
-                    </select>
+              {!isMultiYear ? (
+                <div className="two-col">
+                  <div className="field">
+                    <label>Select Financial Year</label>
+                    <div className="select-wrap">
+                      <select
+                        value={singleYear}
+                        onChange={e => {
+                          setSingleYear(Number(e.target.value));
+                          clearMonths();
+                        }}
+                        disabled={isLoading}
+                      >
+                        {BASE_YEARS.filter(y => y <= SYSTEM_CURRENT_YEAR).map(y => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="year-actions" style={{alignSelf:"end"}}>
+                    <button
+                      type="button"
+                      className="btn-primary-outline"
+                      onClick={resetSession}
+                      disabled={isLoading}
+                    >
+                      New Session
+                    </button>
                   </div>
                 </div>
-                <div />
-                <div className="year-actions" style={{alignSelf:"end"}}>
+              ) : (
+                <div className="two-col">
+                  <div className="field">
+                    <label>From Year</label>
+                    <div className="select-wrap">
+                      <select
+                        value={fromYear}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          setFromYear(val);
+                          if (toYear < val) {
+                            setToYear(val);
+                          }
+                        }}
+                        disabled={isLoading}
+                      >
+                        {BASE_YEARS.filter(y => y <= SYSTEM_CURRENT_YEAR).map(y => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="field">
+                    <label>To Year</label>
+                    <div className="select-wrap">
+                      <select
+                        value={toYear}
+                        onChange={e => setToYear(Number(e.target.value))}
+                        disabled={isLoading}
+                      >
+                        {BASE_YEARS.filter(y => y >= fromYear && y <= SYSTEM_CURRENT_YEAR).map(y => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="year-actions" style={{alignSelf:"end"}}>
+                    <button
+                      type="button"
+                      className="btn-primary-outline"
+                      onClick={resetSession}
+                      disabled={isLoading}
+                    >
+                      New Session
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {!isMultiYear && (
+            <>
+              <div className="month-section-header">
+                <div className="month-section-icon">📅</div>
+                <span className="month-section-title">Month Selection</span>
+              </div>
+              <div className="month-section-body">
+                <div className="quick-btns">
                   <button
+                    className="btn-quick"
                     type="button"
-                    className="btn-outline"
-                    onClick={clearCurrentYear}
-                    disabled={isLoading || !(yearConfigs[year] && yearConfigs[year].length > 0)}
-                  >
-                    Clear Year
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-primary-outline"
-                    onClick={resetSession}
+                    onClick={selectAllMonths}
                     disabled={isLoading}
                   >
-                    New Session
+                    Select All Available
+                  </button>
+                  <button
+                    className="btn-quick"
+                    type="button"
+                    onClick={clearMonths}
+                    disabled={isLoading}
+                  >
+                    Clear Selection
                   </button>
                 </div>
-              </div>
-              {selectedYearConfigs.length > 0 && (
-                <p className="month-hint" style={{marginTop:"8px"}}>
-                  Selected {selectedYearConfigs.length} year{selectedYearConfigs.length > 1 ? "s" : ""}:&nbsp;
-                  <span>
-                    {selectedYearConfigs.map(({ year: y, months: m }) =>
-                      `${y} (${m.length} month${m.length > 1 ? "s" : ""})`
-                    ).join("; ")}
-                  </span>
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* ── Month Selection ─────────────────────────────────────── */}
-          <div className="month-section-header">
-            <div className="month-section-icon">📅</div>
-            <span className="month-section-title">Month Selection</span>
-          </div>
-          <div className="month-section-body">
-            {/* Quick-select buttons */}
-            <div className="quick-btns">
-              {QUICK_SELECT.map(qs => (
-                <button
-                  key={qs.label}
-                  className={`btn-quick${isQuickActive(qs) ? " active" : ""}`}
-                  onClick={() => applyQuick(qs)}
-                  disabled={isLoading}
-                >
-                  {qs.label}
-                </button>
-              ))}
-              {months.length > 0 && (
-                <button
-                  className="btn-quick"
-                  disabled={isLoading}
-                  onClick={() => {
-                    toggleMonth.__clearAll && toggleMonth.__clearAll();
-                  }}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-
-            {/* Month grid */}
-            <div className="month-grid">
-              {MONTH_META.map(({ value, label }) => (
-                <div
-                  key={value}
-                  className={`month-cell${months.includes(value) ? " selected" : ""}${isLoading ? " disabled" : ""}`}
-                  onClick={() => !isLoading && toggleMonth(value)}
-                >
-                  <span className="m-name">{label}</span>
-                  <span className="m-num">{value}</span>
+                <div className="month-grid">
+                  {MONTH_META.map(({ value, label }) => {
+                    const disabled = isLoading || isMonthDisabled(value, singleYear);
+                    return (
+                      <div
+                        key={value}
+                        className={`month-cell${months.includes(value) ? " selected" : ""}${disabled ? " disabled" : ""}`}
+                        onClick={() => !disabled && toggleMonth(value)}
+                      >
+                        <span className="m-name">{label}</span>
+                        <span className="m-num">{value}</span>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
+                <p className="month-hint">
+                  {singleYear > SYSTEM_CURRENT_YEAR ?
+                    "This year is in the future. Processing is blocked."
+                    : months.length === 0 ?
+                      "Select at least one month to proceed."
+                      : <><strong>Year {singleYear}:</strong> {months.length} month{months.length > 1 ? "s" : ""} selected</>
+                  }
+                </p>
+              </div>
+            </>
+          )}
 
-            <p className="month-hint">
-              {months.length === 0
-                ? "Select at least one month to proceed."
-                : <><strong>Year {year}:</strong> <span>{months.length}</span> month{months.length > 1 ? "s" : ""} selected — {months.map(m => MONTH_BY_VALUE[m]?.label || m).join(", ")}</>
-              }
-            </p>
-          </div>
-
-          {/* ── Loading Progress ────────────────────────────────────── */}
           {isLoading && (
             <div style={{padding:"0 20px 20px"}}>
               <div className="progress-panel">
@@ -1492,7 +1522,6 @@
             </div>
           )}
 
-          {/* ── Status Banners ──────────────────────────────────────── */}
           {!isLoading && status !== STATUS.IDLE && STATUS_META[status] && (() => {
             const { type, icon, title, sub } = STATUS_META[status];
             const detail = status === STATUS.ERR_GENERIC ? errorDetail : sub;
@@ -1509,7 +1538,6 @@
             );
           })()}
 
-          {/* ── Generate Button ─────────────────────────────────────── */}
           <div style={{padding:"0 20px 20px"}}>
             <button
               className="btn-submit"
@@ -1526,371 +1554,106 @@
       );
     }
 
-    /* ── About Page ─────────────────────────────────────────────────── */
-    function AboutView() {
-      return (
-        <div className="about-wrap anim-fadeup">
-          <div className="about-hero">
-            <div className="about-badge">Secure extraction</div>
-            <h1 className="about-title">
-              MP Treasury E-Challan Reporting System is built for treasury operations teams
-            </h1>
-            <p className="about-lead">
-              Extract MP Treasury e-payment status data, validate it in real time, and download Excel-ready financial reports without storing confidential credentials.
-            </p>
-          </div>
-
-          <div className="about-divider" />
-
-          <div className="about-grid">
-            <div className="about-card">
-              <div className="step-number">1</div>
-              <div className="step-title">Enter bank details</div>
-              <div className="step-desc">Provide IFSC and account information to target the correct treasury payment ledger.</div>
-            </div>
-            <div className="about-card">
-              <div className="step-number">2</div>
-              <div className="step-title">Select months</div>
-              <div className="step-desc">Choose one or more reporting periods for multi-month extraction and consolidated output.</div>
-            </div>
-            <div className="about-card">
-              <div className="step-number">3</div>
-              <div className="step-title">Run extraction</div>
-              <div className="step-desc">The backend executes the secure extraction workflow and streams progress updates to your browser.</div>
-            </div>
-            <div className="about-card">
-              <div className="step-number">4</div>
-              <div className="step-title">Download report</div>
-              <div className="step-desc">Receive a ready-to-use Excel file instantly after processing completes.</div>
-            </div>
-          </div>
-
-          <div className="about-note">
-            MP Treasury E-Challan Reporting System does not retain your credentials or extraction history. All processing is performed securely in real time, and the generated report is downloaded directly to your device.
-          </div>
-        </div>
-      );
-    }
-
-    /* ── Help Page ──────────────────────────────────────────────────── */
-    function HelpView() {
-      const [name, setName] = useState("");
-      const [email, setEmail] = useState("");
-      const [category, setCategory] = useState("bug");
-      const [message, setMessage] = useState("");
-      const [attachment, setAttachment] = useState(null);
-      const [attachmentName, setAttachmentName] = useState("");
-      const [submitAttempted, setSubmitAttempted] = useState(false);
-      const fileInputRef = useRef(null);
-
-      const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*$/;
-      const isEmailValid = EMAIL_REGEX.test(email.trim());
-      const showEmailError = email.length > 0 && !isEmailValid;
-      const isSubmitDisabled = !name.trim() || !email.trim() || !message.trim() || !isEmailValid;
-
-      const handleFileChange = (e) => {
-        const f = e.target.files[0];
-        if (f) {
-          setAttachment(f);
-          setAttachmentName(f.name);
-        } else {
-          setAttachment(null);
-          setAttachmentName("");
-        }
-      };
-
-      const handleDrop = (e) => {
-        e.preventDefault();
-        const f = e.dataTransfer.files[0];
-        if (f) {
-          setAttachment(f);
-          setAttachmentName(f.name);
-          if (fileInputRef.current) {
-            try {
-              const dt = new DataTransfer();
-              dt.items.add(f);
-              fileInputRef.current.files = dt.files;
-            } catch (_) {
-              // If the browser does not allow direct file assignment, fallback to file name display only.
-            }
-          }
-        }
-      };
-
-      const handleFormSubmit = (e) => {
-        if (isSubmitDisabled) {
-          e.preventDefault();
-          setSubmitAttempted(true);
-        }
-      };
-
-      const faqs = [
-        { q:"Why is the extraction taking a long time?", a:"MP Treasury responds slowly under peak load. Large date ranges (full-year) typically take 3–8 minutes. The progress log will show each month's status as it completes." },
-        { q:"The download didn't start — what should I do?", a:"Check that your browser allows pop-ups and downloads from this domain. If the issue persists, try in a new tab or a different browser." },
-        { q:"Can I run multiple extractions simultaneously?", a:"Each session is independent. However, the server limits concurrent Chromium instances to prevent overload. Submissions beyond the limit return a 429 and you can retry immediately." },
-        { q:"Is my account data stored anywhere?", a:"No. IFSC codes and account numbers are used only for the live scraping session and are never logged or persisted." },
-      ];
-
-      return (
-        <div className="help-wrap anim-fadeup">
-          <div className="help-header">
-            <h1 className="help-title">Help & Support</h1>
-            <p className="help-sub">
-              Encountered a bug or need assistance? Fill in the form below and our team will respond within 24 hours.
-            </p>
-          </div>
-
-          {/* Report Form */}
-          <div className="help-panel">
-            <div className="help-panel-head">
-              <span className="help-panel-icon">🐛</span>
-              <span className="help-panel-title">Report an Issue</span>
-            </div>
-            <form
-              className="help-form"
-              action="https://formsubmit.co/fantasticar127@gmail.com"
-              method="POST"
-              encType="multipart/form-data"
-              onSubmit={handleFormSubmit}
-            >
-              <input type="hidden" name="_subject" value="MP Treasury E-Challan Reporting System Support Request" />
-              <input type="hidden" name="_captcha" value="false" />
-              <input type="hidden" name="_template" value="table" />
-              <input type="hidden" name="_autoresponse" value="Thanks for contacting MP Treasury E-Challan Reporting System support. We will review your request and reply shortly." />
-              <input type="hidden" name="_replyto" value={email} />
-
-              <div className="two-col" style={{gap:"12px"}}>
-                <div className="help-field">
-                  <label className="help-label">Your Name</label>
-                  <input
-                    className="help-input"
-                    name="name"
-                    placeholder="Full name"
-                    value={name}
-                    onChange={e => setName(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="help-field">
-                  <label className="help-label">Email Address</label>
-                  <input
-                    className="help-input"
-                    type="email"
-                    name="email"
-                    placeholder="you@example.com"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    required
-                    aria-invalid={!isEmailValid}
-                  />
-                  {showEmailError && (
-                    <span style={{ color: "#ef4444", fontSize: "12px", marginTop: "4px" }}>
-                      Please enter a valid email address.
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div className="help-field">
-                <label className="help-label">Category</label>
-                <div className="select-wrap">
-                  <select
-                    className="help-select"
-                    name="category"
-                    value={category}
-                    onChange={e => setCategory(e.target.value)}
-                  >
-                    <option value="bug">Bug Report</option>
-                    <option value="feature">Feature Request</option>
-                    <option value="support">Help & Support</option>
-                    <option value="performance">Performance / Timeout</option>
-                    <option value="other">Other</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="help-field">
-                <label className="help-label">Message</label>
-                <textarea
-                  className="help-textarea"
-                  name="message"
-                  placeholder="Please describe the problem in as much detail as possible — steps to reproduce, expected behaviour, and what actually happened…"
-                  value={message}
-                  onChange={e => setMessage(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="help-field">
-                <label className="help-label">Attachment</label>
-                <div
-                  className="file-zone"
-                  onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                  onDragOver={e => e.preventDefault()}
-                  onDrop={handleDrop}
-                >
-                  <span className="file-zone-icon">📎</span>
-                  {attachmentName ? (
-                    <div className="file-name-chip">✓ {attachmentName}</div>
-                  ) : (
-                    <>
-                      <span className="file-zone-label">Click to browse or drag & drop</span>
-                      <span className="file-zone-sub">PNG, JPG, GIF up to 10 MB</span>
-                    </>
-                  )}
-                </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  name="attachment"
-                  accept="image/*"
-                  style={{ display: "none" }}
-                  onChange={handleFileChange}
-                />
-                <p style={{fontSize:"11px",color:"var(--text-muted)",marginTop:"4px"}}>
-                  Attach a screenshot or file to help us troubleshoot your issue faster.
-                </p>
-              </div>
-
-              <button type="submit" className="help-submit" disabled={isSubmitDisabled}>
-                <span>📧</span> Send Report to Support
-              </button>
-            </form>
-          </div>
-
-          {/* FAQ */}
-          <div>
-            <p style={{fontFamily:"var(--font-display)",fontSize:"1rem",fontWeight:700,color:"var(--text-bright)",marginBottom:"14px"}}>
-              Frequently Asked Questions
-            </p>
-            <div className="help-faq">
-              {faqs.map(f => (
-                <div key={f.q} className="faq-item">
-                  <div className="faq-q">{f.q}</div>
-                  <div className="faq-a">{f.a}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      );
-    }
 
     /* ══════════════════════════════════════════════════════════════════
        ROOT APP
     ══════════════════════════════════════════════════════════════════ */
     function App() {
-      /* ── Theme ──────────────────────────────────────────────────── */
-      /* ── Navigation ─────────────────────────────────────────────── */
-      const [activePage, setActivePage] = useState("Dashboard");
+      const [ifsc, setIfsc] = useState("");
+      const [accountNumber, setAccountNumber] = useState("");
 
-      /* ── Form State ─────────────────────────────────────────────── */
-      const [ifsc,          setIfsc]         = useState("");
-      const [accountNumber, setAccountNumber]= useState("");
-      const [year,          setYear]         = useState(CUR_YEAR);
-      const [months,        setMonths]       = useState([]);
-      const [yearConfigs,   setYearConfigs]  = useState({});
-      const [status,        setStatus]       = useState(STATUS.IDLE);
-      const [errorDetail,   setErrorDetail]  = useState("");
-      const [activeQuick,   setActiveQuick]  = useState(null);
-      const [progressLogs,  setProgressLogs] = useState({});
+      const [isMultiYear, setIsMultiYear] = useState(false);
+      const [singleYear, setSingleYear] = useState(SYSTEM_CURRENT_YEAR);
+      const [fromYear, setFromYear] = useState(SYSTEM_CURRENT_YEAR - 2);
+      const [toYear, setToYear] = useState(SYSTEM_CURRENT_YEAR - 1);
 
-      const selectedYearConfigs = Object.entries(yearConfigs)
-        .filter(([, m]) => m.length > 0)
-        .map(([y, m]) => ({ year: Number(y), months: m }));
+      const [months, setMonths] = useState([]);
+      const [status, setStatus] = useState(STATUS.IDLE);
+      const [errorDetail, setErrorDetail] = useState("");
+      const [progressLogs, setProgressLogs] = useState({});
 
-      /* Month toggling */
-      const toggleMonth = useCallback((n) => {
-        setActiveQuick(null);
-        const nextMonths = months.includes(n)
-          ? months.filter(m => m !== n)
-          : [...months, n].sort((a, b) => a - b);
-        setMonths(nextMonths);
-        setYearConfigs(prev => {
-          const next = { ...prev };
-          if (nextMonths.length === 0) delete next[year];
-          else next[year] = nextMonths;
-          return next;
-        });
-      }, [months, year]);
-
-      // Attach a clear-all helper to the function reference (avoids a separate callback)
-      toggleMonth.__clearAll = () => {
-        setActiveQuick(null);
-        setMonths([]);
-        setYearConfigs(prev => { const next = { ...prev }; delete next[year]; return next; });
-      };
-
-      const applyQuick = useCallback((qs) => {
-        setActiveQuick(qs.label);
-        const nextMonths = [...qs.months];
-        setMonths(nextMonths);
-        setYearConfigs(prev => ({ ...prev, [year]: nextMonths }));
-      }, [year]);
-
-      const handleYearChange = useCallback((e) => {
-        const nextYear = Number(e.target.value);
-        setYear(nextYear);
-        setActiveQuick(null);
-        setMonths(yearConfigs[nextYear] ?? []);
-      }, [yearConfigs]);
-
-      const clearCurrentYear = useCallback(() => {
-        setActiveQuick(null);
-        setMonths([]);
-        setYearConfigs(prev => { const next = { ...prev }; delete next[year]; return next; });
-      }, [year]);
-
-      const resetSession = useCallback(() => {
-        setIfsc(""); setAccountNumber("");
-        setYear(CUR_YEAR); setMonths([]); setYearConfigs({});
-        setStatus(STATUS.IDLE); setErrorDetail("");
-        setActiveQuick(null); setProgressLogs({});
+      const isMonthDisabled = useCallback((monthValue, targetYear) => {
+        if (targetYear > SYSTEM_CURRENT_YEAR) return true;
+        if (targetYear === SYSTEM_CURRENT_YEAR && monthValue > SYSTEM_CURRENT_MONTH) return true;
+        return false;
       }, []);
 
-      const isQuickActive = (qs) => activeQuick === qs.label;
+      const toggleMonth = useCallback((n) => {
+        if (isMonthDisabled(n, singleYear)) return;
+        setMonths(prev => prev.includes(n) ? prev.filter(m => m !== n) : [...prev, n].sort((a, b) => a - b));
+      }, [singleYear, isMonthDisabled]);
 
-      /* ── Submit / SSE stream ────────────────────────────────────── */
+      const selectAllMonths = useCallback(() => {
+        const validMonths = MONTH_META.map(m => m.value).filter(val => !isMonthDisabled(val, singleYear));
+        setMonths(validMonths);
+      }, [singleYear, isMonthDisabled]);
+
+      const clearMonths = useCallback(() => setMonths([]), []);
+
+      const resetSession = useCallback(() => {
+        setIfsc("");
+        setAccountNumber("");
+        setIsMultiYear(false);
+        setSingleYear(SYSTEM_CURRENT_YEAR);
+        setFromYear(SYSTEM_CURRENT_YEAR - 2);
+        setToYear(SYSTEM_CURRENT_YEAR - 1);
+        setMonths([]);
+        setStatus(STATUS.IDLE);
+        setErrorDetail("");
+        setProgressLogs({});
+      }, []);
+
       const handleSubmit = useCallback(async () => {
-        if (!ifsc.trim() || !accountNumber.trim() || selectedYearConfigs.length === 0) return;
+        if (!ifsc.trim() || !accountNumber.trim()) return;
+        if (!isMultiYear && months.length === 0) return;
 
         setStatus(STATUS.LOADING);
         setErrorDetail("");
         setProgressLogs({});
 
-        const safeIfsc      = ifsc.trim().toUpperCase();
-        const yearsConfig   = [...selectedYearConfigs].sort((a, b) => a.year - b.year);
-        const payloadData   = {
-          ifsc_code:      safeIfsc,
+        const dynamicYearsConfig = [];
+
+        if (isMultiYear) {
+          for (let y = Number(fromYear); y <= Number(toYear); y++) {
+            const allowed = MONTH_META.map(m => m.value).filter(val => !isMonthDisabled(val, y));
+            if (allowed.length > 0) {
+              dynamicYearsConfig.push({ year: y, months: allowed });
+            }
+          }
+          if (dynamicYearsConfig.length === 0) return;
+        } else {
+          dynamicYearsConfig.push({ year: Number(singleYear), months: months });
+        }
+
+        const payloadData = {
+          ifsc_code: ifsc.trim().toUpperCase(),
           account_number: accountNumber.trim(),
-          years_config:   yearsConfig,
+          years_config: dynamicYearsConfig,
         };
-        const payloadString  = JSON.stringify(payloadData);
-        const idempotencyKey = crypto.randomUUID();
 
         try {
           const response = await fetch(API_ENDPOINT, {
-            method:  "POST",
+            method: "POST",
             headers: {
-              "Content-Type":      "application/json",
-              "X-Idempotency-Key": idempotencyKey,
+              "Content-Type": "application/json",
+              "X-Idempotency-Key": crypto.randomUUID(),
             },
-            body: payloadString,
+            body: JSON.stringify(payloadData),
           });
 
           if (!response.ok) {
             if (response.status === 429) { setStatus(STATUS.ERR_429); return; }
             if (response.status === 503) { setStatus(STATUS.ERR_503); return; }
             let detail = `HTTP ${response.status}`;
-            try { const b = await response.json(); detail = b?.detail || detail; } catch (_) {}
+            try { const body = await response.json(); detail = body?.detail || detail; } catch (_) {}
             setErrorDetail(detail);
             setStatus(STATUS.ERR_GENERIC);
             return;
           }
 
-          const reader  = response.body.getReader();
+          const reader = response.body.getReader();
           const decoder = new TextDecoder();
-          let buffer    = "";
+          let buffer = "";
 
           while (true) {
             const { done, value } = await reader.read();
@@ -1909,12 +1672,6 @@
                   [`${event.year}-${event.month}`]: { status: event.status, message: event.message },
                 }));
               } else if (event.type === "complete") {
-                if (event.url) {
-                  const apiOrigin = API_ENDPOINT.startsWith("http")
-                    ? new URL(API_ENDPOINT).origin
-                    : window.location.origin;
-                  window.location.href = `${apiOrigin}${event.url}`;
-                }
                 setStatus(STATUS.SUCCESS);
                 return;
               } else if (event.type === "error") {
@@ -1925,45 +1682,46 @@
             }
           }
         } catch (err) {
-          setErrorDetail(err.message || "Network error — is the backend running?");
+          setErrorDetail(err.message || "Network error.");
           setStatus(STATUS.ERR_GENERIC);
         }
-      }, [ifsc, accountNumber, year, months, selectedYearConfigs]);
+      }, [ifsc, accountNumber, isMultiYear, singleYear, fromYear, toYear, months, isMonthDisabled]);
 
-      /* ── Render ─────────────────────────────────────────────────── */
       return (
         <>
-          <Header
-            activePage={activePage}
-            setActivePage={setActivePage}
-          />
+          <Header />
 
           <main className="page">
-            {activePage === "Dashboard" && (
-              <div className="main-wrap">
-                <HeroSection />
-                <div className="content-grid">
-                  <ReportConfig
-                    ifsc={ifsc}                     setIfsc={setIfsc}
-                    accountNumber={accountNumber}    setAccountNumber={setAccountNumber}
-                    year={year}                      months={months}
-                    yearConfigs={yearConfigs}        activeQuick={activeQuick}
-                    handleYearChange={handleYearChange}
-                    clearCurrentYear={clearCurrentYear}
-                    resetSession={resetSession}
-                    toggleMonth={toggleMonth}        applyQuick={applyQuick}
-                    isQuickActive={isQuickActive}
-                    selectedYearConfigs={selectedYearConfigs}
-                    status={status}                  errorDetail={errorDetail}
-                    progressLogs={progressLogs}
-                    handleSubmit={handleSubmit}
-                  />
-                  <Sidebar />
-                </div>
+            <div className="main-wrap">
+              <HeroSection />
+              <div className="content-grid">
+                <ReportConfig
+                  ifsc={ifsc}
+                  setIfsc={setIfsc}
+                  accountNumber={accountNumber}
+                  setAccountNumber={setAccountNumber}
+                  isMultiYear={isMultiYear}
+                  setIsMultiYear={setIsMultiYear}
+                  singleYear={singleYear}
+                  setSingleYear={setSingleYear}
+                  fromYear={fromYear}
+                  setFromYear={setFromYear}
+                  toYear={toYear}
+                  setToYear={setToYear}
+                  months={months}
+                  toggleMonth={toggleMonth}
+                  selectAllMonths={selectAllMonths}
+                  clearMonths={clearMonths}
+                  resetSession={resetSession}
+                  status={status}
+                  errorDetail={errorDetail}
+                  progressLogs={progressLogs}
+                  handleSubmit={handleSubmit}
+                  isMonthDisabled={isMonthDisabled}
+                />
+                <Sidebar />
               </div>
-            )}
-            {activePage === "About"     && <AboutView />}
-            {activePage === "Help"      && <HelpView />}
+            </div>
           </main>
 
           <footer className="footer">

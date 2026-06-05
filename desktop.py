@@ -3,6 +3,7 @@ import threading
 import sys
 import os
 import time
+import urllib.request
 import webview
 import uvicorn
 from src.main import app
@@ -27,10 +28,17 @@ if __name__ == '__main__':
     # Start the backend API
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
-    
-    # Wait for Uvicorn to fully bind to port 8000
-    time.sleep(2)
-    
+
+    # Wait for Uvicorn to fully bind to port 8000 and serve the health endpoint.
+    endpoint = "http://127.0.0.1:8000/api/v1/health"
+    deadline = time.time() + 10.0
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(endpoint, timeout=1):
+                break
+        except Exception:
+            time.sleep(0.1)
+
     # Open the frontend in a native Windows GUI
     webview.create_window(
         title="MPCT-AP | Treasury Extraction Portal",

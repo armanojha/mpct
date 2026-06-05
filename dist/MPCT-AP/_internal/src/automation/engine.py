@@ -286,13 +286,23 @@ async def extract_via_dom(
     # --- START RAW HTTP DEBUG ---
     import urllib.request
     import urllib.error
+    import ssl
+
     try:
-        logger.info("[DEBUG] Attempting raw HTTP connection to mptreasury.gov.in...")
+        logger.info("[DEBUG] Attempting raw HTTP connection to mptreasury.gov.in with custom SSL...")
+        
+        # Create a custom SSL context that allows legacy connections
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        # The crucial flag to allow the legacy server connection
+        ctx.options |= ssl.OP_LEGACY_SERVER_CONNECT 
+
         req = urllib.request.Request(
             "https://mptreasury.gov.in", 
             headers={'User-Agent': 'Mozilla/5.0'}
         )
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with urllib.request.urlopen(req, timeout=20, context=ctx) as r:
             logger.info("[DEBUG] RAW HTTP STATUS: %s", r.getcode())
     except Exception as e:
         logger.error("[DEBUG] RAW HTTP REQUEST FAILED: %s", e)

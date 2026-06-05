@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <title>M.P Cyber Treasury · Treasury Portal</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ── Reset & Tokens ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:            #0b0d14;
+      --bg-alt:        #0f1120;
+      --surface:       #131627;
+      --surface2:      #1a1e35;
+      --surface3:      #1f2440;
+      --border:        rgba(255,255,255,0.07);
+      --border-accent: rgba(99,120,255,0.4);
+      --accent:        #6378ff;
+      --accent2:       #a855f7;
+      --accent-dim:    rgba(99,120,255,0.12);
+      --accent-glow:   rgba(99,120,255,0.25);
+      --teal:          #00d4aa;
+      --teal-dim:      rgba(0,212,170,0.12);
+      --success:       #22c55e;
+      --warn:          #f59e0b;
+      --error:         #ef4444;
+      --text:          #e8eaf6;
+      --text-muted:    #5c6490;
+      --text-dim:      #8891c0;
+      --text-bright:   #ffffff;
+      --radius:        12px;
+      --radius-sm:     8px;
+      --font-display:  'Syne', sans-serif;
+      --font-body:     'DM Sans', system-ui, sans-serif;
+      --grad-btn:      linear-gradient(135deg, #4f65f0 0%, #7c3aed 100%);
+      --grad-btn-h:    linear-gradient(135deg, #3b52e0 0%, #6d28d9 100%);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      font-size: 14px;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Navigation ─────────────────────────────────────────────────── */
+    .topnav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(11,13,20,0.85);
+      backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+      height: 60px;
+    }
+    .nav-brand { display: flex; align-items: center; gap: 10px; }
+    .nav-logo { width: 36px; height: 36px; border-radius: 8px; background: var(--surface2); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 17px; }
+    .nav-brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+    .nav-brand-title { font-family: var(--font-display); font-size: 15px; font-weight: 700; color: var(--text-bright); }
+    .nav-brand-sub { font-size: 10px; color: var(--accent); font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; }
+
+    /* ── Layout & Panels ────────────────────────────────────────────── */
+    .main-wrap { max-width: 1280px; margin: 0 auto; padding: 40px 32px 80px; display: flex; flex-direction: column; gap: 32px; width: 100%; }
+    .hero { display: grid; grid-template-columns: auto 1fr; gap: 40px; align-items: start; }
+    .hero-title { font-family: var(--font-display); font-size: 2rem; font-weight: 800; color: var(--text-bright); }
+    .hero-title .accent { color: var(--accent); }
+    .hero-subtitle { font-size: 13px; color: var(--text-dim); }
+    .hero-tagline { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; margin-top: 8px;}
+    .content-grid { display: grid; grid-template-columns: 1fr 280px; gap: 24px; align-items: start; }
+    
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .panel-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+    .panel-header-left { display: flex; align-items: center; gap: 10px; }
+    .panel-header-icon { width: 28px; height: 28px; border-radius: 7px; background: var(--accent-dim); display: flex; align-items: center; justify-content: center; font-size: 13px; }
+    .panel-title { font-family: var(--font-display); font-size: 11.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+    .panel-body { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+
+    /* ── Form Fields & Rows ─────────────────────────────────────────── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .field { display: flex; flex-direction: column; gap: 6px; position: relative; }
+    .field label { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+    .field input, .field select { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: var(--font-body); font-size: 13.5px; padding: 9px 12px; width: 100%; outline: none; transition: border-color 0.15s; }
+    .field input:focus, .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+    .select-wrap { position: relative; }
+    .select-wrap select { padding-right: 32px; cursor: pointer; appearance: none;}
+    .select-wrap::after { content: '▾'; position: absolute; right: 12px; top: 50%; transform: translateY(-50%); color: var(--text-muted); pointer-events: none; font-size: 11px; }
+
+    .year-selection-row { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: end; }
+    .range-inputs-container { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; }
+
+    /* ── Month Selection ────────────────────────────────────────────── */
+    .month-section-header { display: flex; align-items: center; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); }
+    .month-section-icon { width: 24px; height: 24px; border-radius: 6px; background: var(--teal-dim); display: flex; align-items: center; justify-content: center; font-size: 11px; }
+    .month-section-title { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--teal); }
+    .month-section-body { padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 14px; }
+    
+    .quick-btns { display: flex; justify-content: space-between; align-items: center; }
+    .btn-quick { background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text-dim); cursor: pointer; font-family: var(--font-body); font-size: 12px; font-weight: 500; padding: 6px 16px; transition: all 0.12s; }
+    .btn-quick:hover:not(:disabled) { background: var(--accent-dim); border-color: var(--border-accent); color: var(--accent); }
+    .btn-quick:disabled { opacity: 0.25; cursor: not-allowed; }
+
+    .month-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+    .month-cell { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 12px 4px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface2); cursor: pointer; transition: all 0.12s; min-height: 56px; }
+    .month-cell:hover:not(.disabled) { border-color: var(--border-accent); background: var(--surface3); transform: translateY(-1px); }
+    .month-cell.selected { background: var(--accent-dim); border-color: var(--accent); }
+    .month-cell.selected .m-name { color: var(--accent); }
+    .month-cell.selected .m-num { color: var(--accent); opacity: 0.75; }
+    .month-cell.disabled { opacity: 0.15; cursor: not-allowed; border-style: dashed; }
+    .m-name { font-size: 12.5px; font-weight: 600; color: var(--text-dim); font-family: var(--font-display); }
+    .m-num { font-size: 11px; color: var(--text-muted); }
+    .month-hint { font-size: 11.5px; color: var(--text-muted); }
+
+    /* ── Action Triggers & Buttons ──────────────────────────────────── */
+    .btn-toggle { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text); font-family: var(--font-body); font-size: 12.5px; padding: 8px 16px; cursor: pointer; transition: all 0.15s; }
+    .btn-toggle:hover:not(:disabled) { border-color: var(--border-accent); background: var(--surface3); }
+    .btn-toggle.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+    
+    .btn-danger-outline { background: transparent; border: 1px solid rgba(239,68,68,0.3); border-radius: var(--radius-sm); color: var(--error); font-family: var(--font-body); font-size: 12.5px; padding: 8px 16px; cursor: pointer; transition: all 0.15s; margin-left: 20px;}
+    .btn-danger-outline:hover:not(:disabled) { background: rgba(239,68,68,0.1); border-color: var(--error); }
+    
+    .btn-submit { background: var(--grad-btn); border: none; border-radius: var(--radius-sm); color: #fff; cursor: pointer; font-family: var(--font-body); font-size: 14.5px; font-weight: 600; padding: 14px 24px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; box-shadow: 0 4px 24px rgba(79,101,240,0.3); transition: all 0.15s; }
+    .btn-submit:hover:not(:disabled) { background: var(--grad-btn-h); transform: translateY(-1px); box-shadow: 0 6px 32px rgba(79,101,240,0.4); }
+    .btn-submit:disabled { opacity: 0.4; cursor: not-allowed; box-shadow: none; }
+
+    /* ── Progress & Banners ────────────────────────────────────── */
+    .progress-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+    .progress-header { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-dim); }
+    .progress-wrap { background: var(--surface2); border-radius: 3px; height: 3px; overflow: hidden; }
+    .progress-bar { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); width: 25%; animation: indeterminate 1.4s ease-in-out infinite; }
+    @keyframes indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner-dark { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+    .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.2); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; }
+    
+    .progress-log { display: flex; flex-direction: column; gap: 6px; padding: 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius-sm); max-height: 200px; overflow-y: auto; }
+    .progress-log-item { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-muted); }
+    .progress-log-item.success { color: var(--success); }
+    .progress-log-item.error { color: var(--error); }
+    .progress-log-item.processing { color: var(--accent); }
+    .progress-log-key { min-width: 110px; font-weight: 600; color: var(--text); }
+    .progress-log-status { text-transform: uppercase; letter-spacing: 0.05em; font-size: 10.5px; }
+
+    .banner { border-radius: var(--radius-sm); padding: 13px 16px; font-size: 13px; display: flex; align-items: flex-start; gap: 12px; }
+    .banner.error { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3); color: #fca5a5; }
+    .banner.warn { background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.3); color: #fcd34d; }
+    .banner.success { background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.3); color: #86efac; }
+    .banner-body { flex: 1; }
+    .banner-title { font-weight: 700; display: block; margin-bottom: 2px; }
+
+    /* ── Sidebar ────────────────────────────────────────── */
+    .sidebar { display: flex; flex-direction: column; gap: 16px; }
+    .side-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+    .side-card-header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+    .side-card-title { font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); }
+    .side-card-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; font-size: 12px; color: var(--text-dim); }
+    .check-item { display: flex; align-items: center; gap: 8px; }
+    .check-item::before { content: '✓'; width: 16px; height: 16px; border-radius: 4px; background: rgba(34,197,94,0.15); color: var(--success); font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+
+    .footer { background: var(--surface); border-top: 1px solid var(--border); text-align: center; padding: 18px 32px; font-size: 12px; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useCallback } = React;
+
+    // Fixed Context Time: June 2026
+    const SYSTEM_CURRENT_YEAR = 2026;
+    const SYSTEM_CURRENT_MONTH = 6; 
+
+    // Reordered to Standard Calendar format
+    const MONTH_META = [
+      { name: "January",   label: "Jan", value: 1  },
+      { name: "February",  label: "Feb", value: 2  },
+      { name: "March",     label: "Mar", value: 3  },
+      { name: "April",     label: "Apr", value: 4  },
+      { name: "May",       label: "May", value: 5  },
+      { name: "June",      label: "Jun", value: 6  },
+      { name: "July",      label: "Jul", value: 7  },
+      { name: "August",    label: "Aug", value: 8  },
+      { name: "September", label: "Sep", value: 9  },
+      { name: "October",   label: "Oct", value: 10 },
+      { name: "November",  label: "Nov", value: 11 },
+      { name: "December",  label: "Dec", value: 12 },
+    ];
+    const MONTH_BY_VALUE = Object.fromEntries(MONTH_META.map(m => [m.value, m]));
+    const getMonthLabel  = (value) => MONTH_BY_VALUE[value]?.label || String(value);
+
+    // List of individual options for standalone picker dropdown
+    const BASE_YEARS = Array.from({ length: 11 }, (_, i) => SYSTEM_CURRENT_YEAR - 5 + i);
+
+    const STATUS = {
+      IDLE:        "idle",
+      LOADING:     "loading",
+      SUCCESS:     "success",
+      ERR_429:     "err_429",
+      ERR_503:     "err_503",
+      ERR_GENERIC: "err_generic",
+    };
+
+    const STATUS_META = {
+      [STATUS.SUCCESS]:     { type: "success", icon: "✓", title: "Extraction complete", sub: "Saved to your Desktop and opened automatically." },
+      [STATUS.ERR_429]:     { type: "warn",    icon: "⏳", title: "Queue full — retry shortly", sub: "The extraction queue is at capacity. Please wait a few seconds and submit again." },
+      [STATUS.ERR_503]:     { type: "error",   icon: "⚠",  title: "Service unavailable", sub: "The automation engine is currently unhealthy. Please retry later." },
+      [STATUS.ERR_GENERIC]: { type: "error",   icon: "✕", title: "Request failed", sub: "" },
+    };
+
+    function Header() {
+      return (
+        <nav className="topnav">
+          <div className="nav-brand">
+            <div className="nav-logo">🏛️</div>
+            <div className="nav-brand-text">
+              <span className="nav-brand-title">MPTEC-RS</span>
+              <span className="nav-brand-sub">M.P Cyber Treasury</span>
+            </div>
+          </div>
+        </nav>
+      );
+    }
+
+    function App() {
+      const [ifsc, setIfsc] = useState("");
+      const [accountNumber, setAccountNumber] = useState("");
+      
+      // Mode and State Controls
+      const [isMultiYear, setIsMultiYear] = useState(false);
+      const [singleYear, setSingleYear] = useState(SYSTEM_CURRENT_YEAR);
+      const [fromYear, setFromYear] = useState(SYSTEM_CURRENT_YEAR - 2);
+      const [toYear, setToYear] = useState(SYSTEM_CURRENT_YEAR - 1);
+      
+      const [months, setMonths] = useState([]);
+      const [status, setStatus] = useState(STATUS.IDLE);
+      const [errorDetail, setErrorDetail] = useState("");
+      const [progressLogs, setProgressLogs] = useState({});
+
+      // ── Temporal Helper Rules ──
+      const isMonthDisabled = (monthValue, targetYear) => {
+        if (targetYear > SYSTEM_CURRENT_YEAR) return true;
+        // In the current year, any month beyond June is disabled.
+        if (targetYear === SYSTEM_CURRENT_YEAR && monthValue > SYSTEM_CURRENT_MONTH) return true;
+        return false;
+      };
+
+      const getValidMonthsForYear = (targetYear) => {
+        return MONTH_META.filter(m => !isMonthDisabled(m.value, targetYear)).map(m => m.value);
+      };
+
+      // ── Event Handlers ──
+      const toggleMonth = (mValue) => {
+        if (isMonthDisabled(mValue, singleYear)) return;
+        setMonths(prev => 
+          prev.includes(mValue) ? prev.filter(m => m !== mValue) : [...prev, mValue].sort((a,b) => a-b)
+        );
+      };
+
+      const applySelectAllSingle = () => {
+        setMonths(getValidMonthsForYear(singleYear));
+      };
+
+      const clearSingleYearSelection = () => {
+        setMonths([]);
+      };
+
+      const resetSession = () => {
+        setIfsc(""); setAccountNumber("");
+        setSingleYear(SYSTEM_CURRENT_YEAR); setMonths([]);
+        setFromYear(SYSTEM_CURRENT_YEAR - 2); setToYear(SYSTEM_CURRENT_YEAR - 1);
+        setStatus(STATUS.IDLE); setErrorDetail(""); setProgressLogs({});
+      };
+
+      const handleSubmit = async () => {
+        if (!ifsc.trim() || !accountNumber.trim()) return;
+
+        setStatus(STATUS.LOADING);
+        setErrorDetail("");
+        setProgressLogs({});
+
+        let dynamicYearsConfig = [];
+
+        if (isMultiYear) {
+          // Extract all valid months for every year in the range implicitly
+          for (let y = Number(fromYear); y <= Number(toYear); y++) {
+            const allowed = getValidMonthsForYear(y);
+            if (allowed.length > 0) {
+              dynamicYearsConfig.push({ year: y, months: allowed });
+            }
+          }
+        } else {
+          if (months.length === 0) {
+            setErrorDetail("Please select at least one month.");
+            setStatus(STATUS.ERR_GENERIC);
+            return;
+          }
+          dynamicYearsConfig.push({ year: Number(singleYear), months: months });
+        }
+
+        const payload = {
+          ifsc_code: ifsc.trim().toUpperCase(),
+          account_number: accountNumber.trim(),
+          years_config: dynamicYearsConfig,
+        };
+
+        try {
+          const response = await fetch("/api/v1/extract", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Idempotency-Key": crypto.randomUUID(),
+            },
+            body: JSON.stringify(payload),
+          });
+
+          if (!response.ok) {
+            if (response.status === 429) { setStatus(STATUS.ERR_429); return; }
+            if (response.status === 503) { setStatus(STATUS.ERR_503); return; }
+            let detail = `HTTP ${response.status}`;
+            try { const data = await response.json(); detail = data?.detail || detail; } catch (_) {}
+            setErrorDetail(detail); setStatus(STATUS.ERR_GENERIC); return;
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const parts = buffer.split("\n\n");
+            buffer = parts.pop();
+            for (const part of parts) {
+              if (!part.startsWith("data: ")) continue;
+              const dataStr = part.replace("data: ", "").trim();
+              if (!dataStr) continue;
+              let event;
+              try { event = JSON.parse(dataStr); } catch(_) { continue; }
+              
+              if (event.type === "status") {
+                setProgressLogs(prev => ({
+                  ...prev,
+                  [`${event.year}-${event.month}`]: { status: event.status, message: event.message },
+                }));
+              } else if (event.type === "complete") {
+                setStatus(STATUS.SUCCESS);
+                return;
+              } else if (event.type === "error") {
+                setErrorDetail(event.message || "Extraction aborted.");
+                setStatus(STATUS.ERR_GENERIC);
+                return;
+              }
+            }
+          }
+        } catch (err) {
+          setErrorDetail(err.message || "Network layer communications failure.");
+          setStatus(STATUS.ERR_GENERIC);
+        }
+      };
+
+      const isLoading = status === STATUS.LOADING;
+      const isReadyToExtract = ifsc.trim() && accountNumber.trim() && (isMultiYear || months.length > 0);
+
+      return (
+        <div className="main-wrap">
+          <div className="hero">
+            <div>
+              <h1 className="hero-title">
+                M.P Cyber Treasury<br />Reporting System 🏛️
+              </h1>
+              <p className="hero-subtitle">E-Payment Status Report Generator</p>
+              <p className="hero-subtitle" style={{marginTop:"4px", fontSize:"12px", color:"var(--text-dim)"}}>
+                Developed By Arman Ojha
+              </p>
+              <div className="hero-tagline">Automate. Extract. Clean. Generate.</div>
+            </div>
+          </div>
+          
+          <div className="content-grid">
+            <div className="panel">
+              <div className="panel-header">
+                <div className="panel-header-left">
+                  <div className="panel-header-icon">⚙️</div>
+                  <span className="panel-title">Report Configuration</span>
+                </div>
+                <button 
+                  type="button" 
+                  className={`btn-toggle${isMultiYear ? " active" : ""}`}
+                  onClick={() => { if (!isLoading) { setIsMultiYear(!isMultiYear); setMonths([]); } }}
+                  disabled={isLoading}
+                >
+                  {isMultiYear ? "🔄 Switch to Single Year" : "📅 Select Multiple Years"}
+                </button>
+              </div>
+
+              <div className="panel-body">
+                <div>
+                  <p style={{fontSize:"11px", fontWeight:700, textTransform:"uppercase", color:"var(--text-muted)", marginBottom:"12px"}}>
+                    Bank Account Parameters
+                  </p>
+                  <div className="two-col">
+                    <div className="field">
+                      <label>IFSC Code</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. SBIN0001234"
+                        value={ifsc}
+                        onChange={e => setIfsc(e.target.value.toUpperCase())}
+                        maxLength={11}
+                        disabled={isLoading}
+                        spellCheck={false}
+                      />
+                    </div>
+                    <div className="field">
+                      <label>Account Number</label>
+                      <input
+                        type="text"
+                        placeholder="9–18 digit account number"
+                        value={accountNumber}
+                        onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ""))}
+                        maxLength={18}
+                        disabled={isLoading}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <p style={{fontSize:"11px", fontWeight:700, textTransform:"uppercase", color:"var(--text-muted)", marginBottom:"12px"}}>
+                    Timeline Range
+                  </p>
+                  <div className="year-selection-row">
+                    {!isMultiYear ? (
+                      <div className="field">
+                        <label>Select Calendar Year</label>
+                        <div className="select-wrap">
+                          <select 
+                            value={singleYear} 
+                            onChange={e => { setSingleYear(Number(e.target.value)); setMonths([]); }} 
+                            disabled={isLoading}
+                          >
+                            {BASE_YEARS.map(y => (
+                              <option key={y} value={y}>{y}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="range-inputs-container">
+                        <div className="field">
+                          <label>From Year</label>
+                          <div className="select-wrap">
+                            <select 
+                              value={fromYear} 
+                              onChange={e => {
+                                const val = Number(e.target.value);
+                                setFromYear(val);
+                                // Ensure To Year is always greater than From Year
+                                if (toYear <= val) setToYear(val + 1);
+                              }} 
+                              disabled={isLoading}
+                            >
+                              {BASE_YEARS.filter(y => y < SYSTEM_CURRENT_YEAR).map(y => (
+                                <option key={y} value={y}>{y}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="field">
+                          <label>To Year</label>
+                          <div className="select-wrap">
+                            <select 
+                              value={toYear} 
+                              onChange={e => setToYear(Number(e.target.value))} 
+                              disabled={isLoading}
+                            >
+                              {BASE_YEARS.filter(y => y > fromYear && y <= SYSTEM_CURRENT_YEAR).map(y => (
+                                <option key={y} value={y}>{y}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={{display: "flex"}}>
+                      <button 
+                        type="button" 
+                        className="btn-danger-outline" 
+                        onClick={resetSession}
+                        disabled={isLoading}
+                      >
+                        Reset App
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Month Selection Segment Container */}
+              {!isMultiYear ? (
+                <>
+                  <div className="month-section-header">
+                    <div className="month-section-icon">📅</div>
+                    <span className="month-section-title">Month Selection</span>
+                  </div>
+                  <div className="month-section-body">
+                    <div className="quick-btns">
+                      <button 
+                        type="button" 
+                        className="btn-quick" 
+                        onClick={applySelectAllSingle} 
+                        disabled={isLoading || singleYear > SYSTEM_CURRENT_YEAR}
+                      >
+                        Select All Available
+                      </button>
+                      <button 
+                        type="button" 
+                        className="btn-quick" 
+                        onClick={clearSingleYearSelection} 
+                        disabled={isLoading || months.length === 0}
+                      >
+                        Clear Selection
+                      </button>
+                    </div>
+
+                    <div className="month-grid">
+                      {MONTH_META.map(m => {
+                        const disabled = isMonthDisabled(m.value, singleYear);
+                        const selected = months.includes(m.value);
+                        return (
+                          <div
+                            key={m.value}
+                            className={`month-cell${selected ? " selected" : ""}${disabled ? " disabled" : ""}`}
+                            onClick={() => !disabled && toggleMonth(m.value)}
+                          >
+                            <span className="m-name">{m.label}</span>
+                            <span className="m-num">{m.value}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="month-hint">
+                      {singleYear > SYSTEM_CURRENT_YEAR ? (
+                        <span style={{color: "var(--warn)"}}>Selected year is in the future. No data available yet.</span>
+                      ) : months.length === 0 ? (
+                        "Assign target monthly slices to continue execution."
+                      ) : (
+                        <>Tracking selected: <span>{months.length}</span> month(s).</>
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div style={{padding: "20px", borderTop: "1px solid var(--border)", background: "rgba(99,120,255,0.02)"}}>
+                  <div className="banner info">
+                    <span className="banner-icon">📊</span>
+                    <div className="banner-body">
+                      <span className="banner-title" style={{color: "var(--accent)"}}>Automated Sequence Mapping Active</span>
+                      <span className="banner-sub" style={{fontSize: "12.5px", color: "var(--text-dim)"}}>
+                        Range selected: <strong>{fromYear} to {toYear}</strong>. All valid calendar months within this historical range will be automatically extracted and merged.
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isLoading && (
+                <div style={{padding: "0 20px 20px"}}>
+                  <div className="progress-panel">
+                    <div className="progress-header">
+                      <div className="spinner-dark" />
+                      <span className="progress-label">Extraction running — streaming live rows...</span>
+                    </div>
+                    <div className="progress-wrap"><div className="progress-bar" /></div>
+                    {Object.keys(progressLogs).length > 0 && (
+                      <div className="progress-log">
+                        {Object.entries(progressLogs).map(([key, value]) => {
+                          const [yStr, mStr] = key.split("-");
+                          return (
+                            <div key={key} className={`progress-log-item ${value.status}`}>
+                              <span className="progress-log-key">{yStr} - {getMonthLabel(Number(mStr))}</span>
+                              <span className="progress-log-status">{value.status}</span>
+                              {value.message && <span style={{flex: 1, fontSize:"12px"}}>- {value.message}</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {!isLoading && status !== STATUS.IDLE && STATUS_META[status] && (
+                <div style={{padding: "0 20px 20px"}}>
+                  <div className={`banner ${STATUS_META[status].type}`}>
+                    <span className="banner-icon">{STATUS_META[status].icon}</span>
+                    <div className="banner-body">
+                      <span className="banner-title">{STATUS_META[status].title}</span>
+                      <span className="banner-sub">{status === STATUS.ERR_GENERIC ? errorDetail : STATUS_META[status].sub}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div style={{padding: "0 20px 20px"}}>
+                <button 
+                  type="button" 
+                  className="btn-submit" 
+                  disabled={!isReadyToExtract || isLoading}
+                  onClick={handleSubmit}
+                >
+                  {isLoading ? <><div className="spinner" /> Scraping and Formatting Database Rows...</> : "📋 Process Automated Extraction Task"}
+                </button>
+              </div>
+            </div>
+
+            <div className="sidebar">
+              <div className="side-card">
+                <div className="side-card-header">
+                  <span className="side-card-title">Runtime Rules</span>
+                </div>
+                <div className="side-card-body">
+                  <p>Automated extraction targets financial records from the MP State Treasury securely.</p>
+                  <div style={{display: "flex", flexDirection: "column", gap: "7px"}}>
+                    <div className="check-item">Zero-persistence security pipeline</div>
+                    <div className="check-item">Dynamic structural normalization</div>
+                    <div className="check-item">Local client isolated execution</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>

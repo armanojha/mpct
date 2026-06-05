@@ -53,9 +53,11 @@ import io
 import json
 import logging
 import os
+import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 from typing import AsyncGenerator
 
 import pandas as pd
@@ -109,20 +111,119 @@ def _store_download(session_id: str, xlsx_bytes: bytes, filename: str) -> None:
     }
 
 
-def get_executable_dir():
-    """Get the directory where the actual .exe file lives, or the script root if running raw."""
+def get_executable_dir() -> str:
+    """Get the directory where the actual .exe file lives, or the repository root when running raw."""
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.abspath(
+        os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir)
+    )
 
 
-def save_dataframe_to_local_results(df: pd.DataFrame, filename="treasury_report.xlsx") -> str:
-    """Saves the Excel file to a 'results' folder next to the .exe."""
-    exe_dir = get_executable_dir()
-    results_dir = os.path.join(exe_dir, "results")
-    os.makedirs(results_dir, exist_ok=True)
-    full_path = os.path.join(results_dir, filename)
-    df.to_excel(full_path, index=False, engine="openpyxl")
+def _open_folder(path: str) -> None:
+    """Open the file or folder in the OS file manager if possible."""
+    try:
+        if sys.platform == "win32":
+            try:
+                if os.path.isfile(path):
+                    subprocess.Popen(
+                        ["explorer", "/select,", os.path.abspath(path)],
+                        shell=False,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                    )
+                else:
+                    import ctypes
+                    ctypes.windll.shell32.ShellExecuteW(None, "open", path, None, None, 1)
+                return
+            except Exception:
+                pass
+
+            # Fallback to explorer if ShellExecute fails.
+            if os.path.isfile(path):
+                subprocess.Popen(
+                    ["explorer", "/select,", os.path.abspath(path)],
+                    shell=False,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                subprocess.Popen(
+                    ["explorer", path],
+                    shell=False,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path], shell=False)
+        else:
+            subprocess.Popen(["xdg-open", path], shell=False)
+    except Exception as exc:
+        logger.warning("[ENDPOINT] Could not open results folder %s: %s", path, exc)
+
+
+def _get_desktop_folder() -> str:
+    """Return the current user's desktop folder path on Windows or fallback."""
+    if sys.platform == "win32":
+        try:
+            import ctypes.wintypes
+
+            CSIDL_DESKTOPDIRECTORY = 0x0010
+            buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+            ctypes.windll.shell32.SHGetFolderPathW(None, CSIDL_DESKTOPDIRECTORY, None, 0, buf)
+            desktop_folder = buf.value
+            if desktop_folder:
+                return desktop_folder
+        except Exception:
+            pass
+
+    # Fallback to the standard Desktop path if the Windows API call is unavailable.
+    home = Path.home()
+    desktop_folder = os.path.join(home, "Desktop")
+    if os.path.isdir(desktop_folder):
+        return desktop_folder
+
+    # Many Windows users have Desktop redirected into OneDrive.
+    onedrive_desktop = os.path.join(home, "OneDrive", "Desktop")
+    if os.path.isdir(onedrive_desktop):
+        return onedrive_desktop
+
+    try:
+        os.makedirs(desktop_folder, exist_ok=True)
+        return desktop_folder
+    except Exception:
+        pass
+
+    # Final fallback: use the user's home directory if Desktop is missing/uncreatable.
+    return str(home)
+
+
+def save_dataframe_to_local_results(df, filename="treasury_report.xlsx"):
+    """Saves the Excel file directly to the user's Desktop folder with auto-sized columns."""
+
+    desktop_folder = _get_desktop_folder()
+    os.makedirs(desktop_folder, exist_ok=True)
+
+    full_path = os.path.join(desktop_folder, filename)
+    logger.info("[ENDPOINT] Saving Excel to Desktop path: %s", full_path)
+
+    # Use ExcelWriter to format columns
+    with pd.ExcelWriter(full_path, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Report")
+        worksheet = writer.sheets["Report"]
+        
+        # Auto-adjust column widths
+        for i, col in enumerate(df.columns):
+            # Calculate max length of the data or the header title, whichever is longer
+            max_len = max(
+                df[col].astype(str).map(len).max() if not df[col].empty else 0, 
+                len(str(col))
+            )
+            
+            # openpyxl columns are 1-indexed (A=1, B=2...)
+            from openpyxl.utils import get_column_letter
+            col_letter = get_column_letter(i + 1)
+            
+            # Set the width with extra padding for wide date characters
+            worksheet.column_dimensions[col_letter].width = max_len + 8
+
     return full_path
 
 logger = logging.getLogger(__name__)
@@ -384,32 +485,43 @@ async def submit_extraction(
             return
 
         # Convert numeric month values to short names for the final Excel export.
-        if "month" in result_df.columns:
-            month_names = {
-                1: "Jan",
-                2: "Feb",
-                3: "Mar",
-                4: "Apr",
-                5: "May",
-                6: "Jun",
-                7: "Jul",
-                8: "Aug",
-                9: "Sep",
-                10: "Oct",
-                11: "Nov",
-                12: "Dec",
-            }
-            try:
-                result_df = result_df.copy()
+        month_names = {
+            1: "Jan",
+            2: "Feb",
+            3: "Mar",
+            4: "Apr",
+            5: "May",
+            6: "Jun",
+            7: "Jul",
+            8: "Aug",
+            9: "Sep",
+            10: "Oct",
+            11: "Nov",
+            12: "Dec",
+        }
+        try:
+            result_df = result_df.copy()
+            if "month" in result_df.columns:
                 result_df["month"] = result_df["month"].astype(int).map(month_names).fillna(result_df["month"])
-            except Exception:
-                # If the month column cannot be converted cleanly, leave it as-is.
-                pass
+            if "Month" in result_df.columns:
+                result_df["Month"] = result_df["Month"].astype(int).map(month_names).fillna(result_df["Month"])
+        except Exception:
+            # If the month column cannot be converted cleanly, leave it as-is.
+            pass
 
-        # Serialize to .xlsx on a background thread.
+        # Serialize to .xlsx on a background thread with auto-sized columns.
         def _write_excel() -> bytes:
             buf = io.BytesIO()
-            result_df.to_excel(buf, index=False, engine="openpyxl")
+            with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+                result_df.to_excel(writer, index=False, sheet_name="Report")
+                worksheet = writer.sheets["Report"]
+                for i, col in enumerate(result_df.columns):
+                    max_len = max(
+                        result_df[col].astype(str).map(len).max() if not result_df[col].empty else 0, 
+                        len(str(col))
+                    )
+                    from openpyxl.utils import get_column_letter
+                    worksheet.column_dimensions[get_column_letter(i + 1)].width = max_len + 8
             return buf.getvalue()
 
         xlsx_bytes = await asyncio.to_thread(_write_excel)
@@ -419,6 +531,10 @@ async def submit_extraction(
         filename  = f"treasury_{body.ifsc_code}_{year_tags}.xlsx"
 
         saved_path = await asyncio.to_thread(save_dataframe_to_local_results, result_df, filename)
+
+        # Open the saved file in Explorer so the Desktop view updates immediately.
+        await asyncio.to_thread(_open_folder, saved_path)
+
         _store_download(session_id, xlsx_bytes, filename)
         logger.info(
             "[ENDPOINT] Task %s saved Excel to %s and stored %d bytes under session_id=%s.",
