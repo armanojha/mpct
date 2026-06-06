@@ -741,6 +741,8 @@ async def run_extraction(
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-extensions",
+            "--disable-gpu",
+            "--disable-software-rasterizer",
         ]
         if system_proxy:
             chromium_args.append(f"--proxy-server={system_proxy}")

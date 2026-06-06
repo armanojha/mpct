@@ -557,6 +557,24 @@
     .btn-primary-outline:hover:not(:disabled) { background: var(--accent-dim); }
     .btn-primary-outline:disabled { opacity: 0.4; cursor: not-allowed; }
 
+    .btn-stop {
+      background: transparent;
+      border: 1px solid rgba(239, 68, 68, 0.28);
+      color: var(--error);
+      border-radius: var(--radius-sm);
+      font-family: var(--font-body);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 12px 18px;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+      white-space: nowrap;
+    }
+    .btn-stop:hover:not(:disabled) {
+      background: rgba(239, 68, 68, 0.1);
+    }
+    .btn-stop:disabled { opacity: 0.4; cursor: not-allowed; }
+
     .btn-submit {
       background: var(--grad-btn);
       border: none;
@@ -1142,7 +1160,7 @@
       { name: "March",     label: "Mar", value: 3  },
     ];
     const MONTH_BY_VALUE = Object.fromEntries(MONTH_META.map(m => [m.value, m]));
-    const getMonthLabel  = (value) => MONTH_BY_VALUE[value]?.label || String(value);
+    const getMonthLabel  = (value) => (MONTH_BY_VALUE[value] && MONTH_BY_VALUE[value].label) || String(value);
 
     // Fixed Context Time: June 2026
     const SYSTEM_CURRENT_YEAR = 2026;
@@ -1359,7 +1377,7 @@
               {!isMultiYear ? (
                 <div className="two-col">
                   <div className="field">
-                    <label>Select Financial Year</label>
+                    <label>Select Year</label>
                     <div className="select-wrap">
                       <select
                         value={singleYear}
@@ -1495,7 +1513,10 @@
                 <div className="progress-header">
                   <div className="spinner-dark" />
                   <span className="progress-label">
-                    Extraction in progress — this may take several minutes…
+                    {Object.keys(progressLogs).length === 0
+                      ? "Launching Chrome now — Chrome is running in the background while extraction begins."
+                      : "Extraction in progress — this may take several minutes…"
+                    }
                   </span>
                 </div>
                 <div className="progress-wrap">
@@ -1538,7 +1559,7 @@
             );
           })()}
 
-          <div style={{padding:"0 20px 20px"}}>
+          <div style={{padding:"0 20px 20px", display:"flex", gap:"12px", alignItems:"center", flexWrap:"wrap"}}>
             <button
               className="btn-submit"
               onClick={handleSubmit}
@@ -1549,6 +1570,15 @@
                 : <><span>📋</span> Generate Report</>
               }
             </button>
+            {isLoading && (
+              <button
+                type="button"
+                className="btn-stop"
+                onClick={handleStop}
+              >
+                ⏹ Stop
+              </button>
+            )}
           </div>
         </div>
       );
@@ -1571,6 +1601,7 @@
       const [status, setStatus] = useState(STATUS.IDLE);
       const [errorDetail, setErrorDetail] = useState("");
       const [progressLogs, setProgressLogs] = useState({});
+      const [abortController, setAbortController] = useState(null);
 
       const isMonthDisabled = useCallback((monthValue, targetYear) => {
         if (targetYear > SYSTEM_CURRENT_YEAR) return true;
@@ -1591,6 +1622,10 @@
       const clearMonths = useCallback(() => setMonths([]), []);
 
       const resetSession = useCallback(() => {
+        if (abortController) {
+          abortController.abort();
+          setAbortController(null);
+        }
         setIfsc("");
         setAccountNumber("");
         setIsMultiYear(false);
@@ -1601,7 +1636,17 @@
         setStatus(STATUS.IDLE);
         setErrorDetail("");
         setProgressLogs({});
-      }, []);
+      }, [abortController]);
+
+      const handleStop = useCallback(() => {
+        if (abortController) {
+          abortController.abort();
+          setAbortController(null);
+        }
+        setStatus(STATUS.IDLE);
+        setErrorDetail("");
+        setProgressLogs({});
+      }, [abortController]);
 
       const handleSubmit = useCallback(async () => {
         if (!ifsc.trim() || !accountNumber.trim()) return;
@@ -1620,10 +1665,27 @@
               dynamicYearsConfig.push({ year: y, months: allowed });
             }
           }
-          if (dynamicYearsConfig.length === 0) return;
+          if (dynamicYearsConfig.length === 0) {
+            setStatus(STATUS.IDLE);
+            return;
+          }
         } else {
           dynamicYearsConfig.push({ year: Number(singleYear), months: months });
         }
+
+        let controller = null;
+        if (typeof window.AbortController === "function") {
+          controller = new AbortController();
+          setAbortController(controller);
+        }
+
+        const requestId = typeof window.crypto === "object" && typeof window.crypto.randomUUID === "function"
+          ? window.crypto.randomUUID()
+          : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+              const r = Math.random() * 16 | 0;
+              const v = c === "x" ? r : (r & 0x3 | 0x8);
+              return v.toString(16);
+            });
 
         const payloadData = {
           ifsc_code: ifsc.trim().toUpperCase(),
@@ -1636,31 +1698,56 @@
             method: "POST",
             headers: {
               "Content-Type": "application/json",
-              "X-Idempotency-Key": crypto.randomUUID(),
+              "X-Idempotency-Key": requestId,
             },
             body: JSON.stringify(payloadData),
+            signal: controller ? controller.signal : undefined,
           });
 
           if (!response.ok) {
             if (response.status === 429) { setStatus(STATUS.ERR_429); return; }
             if (response.status === 503) { setStatus(STATUS.ERR_503); return; }
             let detail = `HTTP ${response.status}`;
-            try { const body = await response.json(); detail = body?.detail || detail; } catch (_) {}
+            try { const body = await response.json(); detail = (body && body.detail) || detail; } catch (e) {}
             setErrorDetail(detail);
             setStatus(STATUS.ERR_GENERIC);
             return;
           }
 
-          const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
+          if (response.body && typeof response.body.getReader === "function") {
+            const reader = response.body.getReader();
+            const decoder = typeof TextDecoder === "function" ? new TextDecoder() : null;
+            let buffer = "";
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const parts = buffer.split("\n\n");
-            buffer = parts.pop();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder ? decoder.decode(value, { stream: true }) : String(value);
+              const parts = buffer.split("\n\n");
+              buffer = parts.pop();
+              for (const part of parts) {
+                if (!part.startsWith("data: ")) continue;
+                const dataStr = part.replace("data: ", "").trim();
+                if (!dataStr) continue;
+                const event = JSON.parse(dataStr);
+                if (event.type === "status") {
+                  setProgressLogs(prev => ({
+                    ...prev,
+                    [`${event.year}-${event.month}`]: { status: event.status, message: event.message },
+                  }));
+                } else if (event.type === "complete") {
+                  setStatus(STATUS.SUCCESS);
+                  return;
+                } else if (event.type === "error") {
+                  setErrorDetail(event.message || "Extraction failed.");
+                  setStatus(STATUS.ERR_GENERIC);
+                  return;
+                }
+              }
+            }
+          } else {
+            const text = await response.text();
+            const parts = text.split("\n\n");
             for (const part of parts) {
               if (!part.startsWith("data: ")) continue;
               const dataStr = part.replace("data: ", "").trim();
@@ -1682,8 +1769,21 @@
             }
           }
         } catch (err) {
-          setErrorDetail(err.message || "Network error.");
-          setStatus(STATUS.ERR_GENERIC);
+          var aborted =
+            (err && err.name === "AbortError") ||
+            (err && err.message && err.message.toLowerCase().includes("abort")) ||
+            (controller && controller.signal && controller.signal.aborted);
+
+          if (aborted) {
+            setStatus(STATUS.IDLE);
+            setErrorDetail("Extraction stopped.");
+            setProgressLogs({});
+          } else {
+            setErrorDetail((err && err.message) || "Network error.");
+            setStatus(STATUS.ERR_GENERIC);
+          }
+        } finally {
+          setAbortController(null);
         }
       }, [ifsc, accountNumber, isMultiYear, singleYear, fromYear, toYear, months, isMonthDisabled]);
 
@@ -1731,7 +1831,19 @@
       );
     }
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    try {
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    } catch (renderError) {
+      const root = document.getElementById("root");
+      if (root) {
+        root.innerHTML = `<div style="padding:24px;color:#f8f8f8;background:#111;min-height:100vh;font-family:sans-serif;
+          display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;">
+            <strong>Application failed to render.</strong>
+            <span>${renderError.message || "Unexpected error."}</span>
+          </div>`;
+      }
+      console.error("Render error:", renderError);
+    }
   </script>
 </body>
 </html>

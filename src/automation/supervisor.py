@@ -734,7 +734,7 @@ class AutomationSupervisor:
                             account_no=account_no,
                             year=year,
                             month=month,
-                            headless=True,
+                            headless=False,
                         ),
                         timeout=EXTRACTION_TIMEOUT_SECONDS,
                     )
@@ -791,7 +791,7 @@ class AutomationSupervisor:
                                 account_no=account_no,
                                 year=year,
                                 month=month,
-                                headless=True,
+                                headless=False,
                                 prefer_stream=True,
                             ),
                             timeout=EXTRACTION_TIMEOUT_SECONDS,

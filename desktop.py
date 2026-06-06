@@ -8,6 +8,9 @@ import webview
 import uvicorn
 from src.main import app
 
+# ADD THIS LINE TO PREVENT THE BLACK SCREEN CRASH:
+os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = "--disable-gpu --disable-software-rasterizer"
+
 def resource_path(relative_path):
     """Get absolute path to resource, works for dev and for PyInstaller."""
     try:
