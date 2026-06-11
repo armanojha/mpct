@@ -669,7 +669,7 @@ async def run_extraction(
     account_no: str,
     year: int,
     month: int,
-    headless: bool = True,
+    headless: bool = False,
     prefer_stream: bool = False,
 ) -> tuple[list[dict], str]:
     """
@@ -686,7 +686,7 @@ async def run_extraction(
     account_no    : bank account number used by the portal filter
     year          : 4-digit year
     month         : 1-based month
-    headless      : run Chromium without a visible window (True for servers)
+    headless      : run Chromium without a visible window (hardcoded to False – browser always visible)
     prefer_stream : if True, try the Excel stream engine first (useful for
                     debugging the secondary path independently)
 
@@ -696,6 +696,10 @@ async def run_extraction(
       rows       : list of row dicts
       engine_tag : "dom" or "stream" – tells the transformer which engine ran
     """
+    # Browser always runs in VISIBLE mode (headless=False is enforced)
+    headless = False
+    logger.info("[ENGINE] Chrome browser window will open for this extraction")
+    
     async with async_playwright() as pw:
         # `async with` is a context manager that guarantees cleanup.
         # Even if an exception is raised mid-way, Playwright will close
@@ -741,8 +745,28 @@ async def run_extraction(
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-extensions",
+            # GPU flags: disable GPU entirely so headless Chrome never touches
+            # the DirectComposition / DXGI surface that WebView2 owns.
+            # Without these, launching a second Chrome process (even headless)
+            # on Windows causes the GPU broker to send a WM_DESTROY to ALL
+            # GPU-composited windows — which is exactly what kills the PyWebView
+            # WebView2 rendering surface and produces the black screen.
             "--disable-gpu",
+            "--disable-gpu-compositing",
             "--disable-software-rasterizer",
+            # Sandbox / shared-memory flags required inside PyInstaller's
+            # single-file extraction directory where /dev/shm is absent.
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            # Prevent Chrome from spawning a separate GPU process at all.
+            # The GPU process is the specific subprocess that triggers the
+            # DirectComposition conflict with WebView2.
+            "--disable-gpu-sandbox",
+            # Keep network stack alive independently of the GPU process.
+            "--disable-background-networking",
+            # Suppress the 'Chrome is being controlled by automated software'
+            # infobar which can cause layout reflows that interact with GPU.
+            "--disable-infobars",
         ]
         if system_proxy:
             chromium_args.append(f"--proxy-server={system_proxy}")

@@ -233,9 +233,14 @@ async def resolve_idempotency_hmac(
 # SUPERVISOR ACCESSOR
 # ──────────────────────────────────────────────────────────────────────────────
 
-def get_supervisor():
+async def get_supervisor():
     """
     FastAPI dependency that returns the shared AutomationSupervisor instance.
+    
+    CRITICAL: Now async and waits for supervisor_ready event. This allows
+    /ping to respond immediately (~1 second) while Supervisor initializes
+    in the background. Actual extraction endpoints wait for Supervisor only
+    when needed.
 
     SINGLETON PATTERN IN FASTAPI (For algoRoute)
     ──────────────────────────────────────────────
@@ -247,5 +252,12 @@ def get_supervisor():
     This is injected into route handlers via:
         supervisor = Depends(get_supervisor)
     """
+    import src.main
+    
+    # Wait for Supervisor to finish background startup before returning it
+    # (but only if it hasn't been waited for yet).
+    # /ping does not use this dependency, so it responds immediately.
+    await src.main.supervisor_ready.wait()
+    
     from src.automation.supervisor import supervisor as _supervisor
     return _supervisor

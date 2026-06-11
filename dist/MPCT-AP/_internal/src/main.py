@@ -53,6 +53,7 @@ if sys.platform == "win32":
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 
 def resource_path(relative_path):
@@ -84,6 +85,27 @@ logger = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# GLOBAL STATE FOR BACKGROUND SUPERVISOR STARTUP
+# ──────────────────────────────────────────────────────────────────────────────
+
+supervisor_task = None
+supervisor_ready = asyncio.Event()  # Set when supervisor.start() completes
+
+
+async def _supervisor_startup_background():
+    """Runs supervisor.start() in background; allows /ping to respond immediately."""
+    global supervisor_task
+    try:
+        logger.info("[SUPERVISOR] Starting in background (non-blocking)...")
+        await supervisor.start()
+        logger.info("[SUPERVISOR] Started and ready to accept jobs.")
+        supervisor_ready.set()
+    except Exception as e:
+        logger.error(f"[SUPERVISOR] Background startup failed: {e}")
+        raise
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # LIFESPAN CONTEXT MANAGER
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -92,6 +114,13 @@ async def lifespan(app: FastAPI):
     """
     Runs setup code BEFORE the app accepts connections, and teardown code
     AFTER it stops.
+
+    CRITICAL CHANGE: Supervisor now starts in BACKGROUND, NOT blocking the
+    app startup. This allows /ping to respond immediately (~1 second) instead
+    of waiting 14 seconds for Supervisor initialization.
+
+    API endpoints that need Supervisor (e.g. /api/v1/extract) will wait for
+    supervisor_ready event before processing requests.
 
     ASYNC CONTEXT MANAGER PATTERN (For algoRoute)
     ───────────────────────────────────────────────
@@ -112,6 +141,8 @@ async def lifespan(app: FastAPI):
     that any subprocess Playwright spawns from this point forward (i.e. Chromium)
     will inherit a Proactor-compatible environment.
     """
+    global supervisor_task
+    
     # ── STARTUP ──────────────────────────────────────────────────────────
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -120,14 +151,23 @@ async def lifespan(app: FastAPI):
     logger.info("=== MPCT-AP API Gateway starting up ===")
     logger.info("MAX_PAYLOAD_SIZE: %d bytes", MAX_PAYLOAD_SIZE_BYTES)
 
-    await supervisor.start()
-    logger.info("AutomationSupervisor started and ready to accept jobs.")
+    # Start Supervisor in BACKGROUND (doesn't block /ping response)
+    supervisor_task = asyncio.create_task(_supervisor_startup_background())
 
     # Hand control to FastAPI — requests are accepted from here until shutdown.
+    # /ping responds immediately without waiting for supervisor_ready
     yield
 
     # ── SHUTDOWN ─────────────────────────────────────────────────────────
     logger.info("=== MPCT-AP API Gateway shutting down ===")
+    
+    # Wait for supervisor background task to complete if it's still running
+    if supervisor_task and not supervisor_task.done():
+        try:
+            await asyncio.wait_for(supervisor_task, timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("[SHUTDOWN] Supervisor startup didn't complete in time.")
+    
     await supervisor.stop()
     logger.info("AutomationSupervisor stopped cleanly.")
 
@@ -218,11 +258,43 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(v1_router, prefix="/api/v1")
 
 
+# ---------------------------------------------------------------------------
+# STATIC FILES  –  serve the entire frontend/ directory over HTTP
+# ---------------------------------------------------------------------------
+# WHY THIS IS REQUIRED
+# --------------------
+# index.html loads vendor JS via relative paths (./vendor/react.development.js
+# etc.).  Without a StaticFiles mount, FastAPI only knows about GET / and has
+# no handler for GET /vendor/*.js  →  404  →  React never loads  →  black screen.
+#
+# Mount order matters: the router (api/v1) is mounted first, then the catch-all
+# static mount at "/frontend".  We keep GET / as an explicit route so the root
+# URL always resolves to index.html even if the static mount is reordered.
+#
+# check_dir=False is safe here — resource_path() already points into _MEIPASS
+# when frozen, and the PyInstaller --add-data flag guarantees the directory
+# exists; we just don't want a crash if the path is evaluated before _MEIPASS
+# is fully extracted.
+frontend_dir = resource_path("frontend")
+if os.path.isdir(frontend_dir):
+    app.mount("/frontend", StaticFiles(directory=frontend_dir), name="frontend_static")
+    # Also mount vendor at the root /vendor path so ./vendor/ relative links resolve.
+    vendor_dir = os.path.join(frontend_dir, "vendor")
+    if os.path.isdir(vendor_dir):
+        app.mount("/vendor", StaticFiles(directory=vendor_dir), name="vendor_static")
+
+
 @app.get("/", include_in_schema=False)
 async def serve_ui():
     """Serves the React frontend to the PyWebView desktop window."""
     html_path = resource_path(os.path.join("frontend", "index.html"))
     return FileResponse(html_path)
+
+
+@app.get("/ping", include_in_schema=False)
+async def ping():
+    """Ultra-fast ping endpoint for startup health checks (before Supervisor is ready)."""
+    return {"status": "ok"}
 
 
 # ──────────────────────────────────────────────────────────────────────────────

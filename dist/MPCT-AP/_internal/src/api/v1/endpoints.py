@@ -53,6 +53,7 @@ import io
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -195,13 +196,51 @@ def _get_desktop_folder() -> str:
     return str(home)
 
 
+def _sanitize_filename_component(value: str, fallback: str) -> str:
+    """Convert arbitrary text into a safe filename fragment."""
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "_", str(value).strip()).strip("_")
+    cleaned = re.sub(r"_+", "_", cleaned)
+    return cleaned[:60] or fallback
+
+
+def _pick_primary_party_name(df: pd.DataFrame) -> str:
+    """Pick the most representative party name from the exported rows."""
+    for column_name in ("party_name", "Party Name"):
+        if column_name not in df.columns:
+            continue
+
+        series = df[column_name].dropna().astype(str).str.strip()
+        series = series[series != ""]
+        if series.empty:
+            continue
+
+        return series.value_counts().idxmax()
+
+    return "party"
+
+
+def _build_unique_desktop_path(desktop_folder: str, filename: str) -> str:
+    """Return a desktop path that does not overwrite an existing file."""
+    candidate = os.path.join(desktop_folder, filename)
+    if not os.path.exists(candidate):
+        return candidate
+
+    stem, suffix = os.path.splitext(filename)
+    counter = 1
+    while True:
+        candidate = os.path.join(desktop_folder, f"{stem}_{counter}{suffix}")
+        if not os.path.exists(candidate):
+            return candidate
+        counter += 1
+
+
 def save_dataframe_to_local_results(df, filename="treasury_report.xlsx"):
     """Saves the Excel file directly to the user's Desktop folder with auto-sized columns."""
 
     desktop_folder = _get_desktop_folder()
     os.makedirs(desktop_folder, exist_ok=True)
 
-    full_path = os.path.join(desktop_folder, filename)
+    full_path = _build_unique_desktop_path(desktop_folder, filename)
     logger.info("[ENDPOINT] Saving Excel to Desktop path: %s", full_path)
 
     # Use ExcelWriter to format columns
@@ -526,16 +565,27 @@ async def submit_extraction(
 
         xlsx_bytes = await asyncio.to_thread(_write_excel)
 
-        # Derive filename from the years in the config.
-        year_tags = "_".join(str(yc.year) for yc in body.years_config)
-        filename  = f"treasury_{body.ifsc_code}_{year_tags}.xlsx"
+        # Derive filename from the extracted data itself.
+        party_name = _sanitize_filename_component(
+            _pick_primary_party_name(result_df),
+            fallback="party",
+        )
+
+        if "year" in result_df.columns:
+            year_values = pd.to_numeric(result_df["year"], errors="coerce").dropna()
+            year_tags = "_".join(str(int(year)) for year in sorted(year_values.astype(int).unique()))
+        else:
+            year_tags = "_".join(str(yc.year) for yc in body.years_config)
+
+        filename = f"treasury_{party_name}_{year_tags}.xlsx" if year_tags else f"treasury_{party_name}.xlsx"
 
         saved_path = await asyncio.to_thread(save_dataframe_to_local_results, result_df, filename)
+        saved_filename = os.path.basename(saved_path)
 
         # Open the saved file in Explorer so the Desktop view updates immediately.
         await asyncio.to_thread(_open_folder, saved_path)
 
-        _store_download(session_id, xlsx_bytes, filename)
+        _store_download(session_id, xlsx_bytes, saved_filename)
         logger.info(
             "[ENDPOINT] Task %s saved Excel to %s and stored %d bytes under session_id=%s.",
             task_id, saved_path, len(xlsx_bytes), session_id,

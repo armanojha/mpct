@@ -4,17 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- React + Babel via CDN (no build step required) -->
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- React + Babel via local vendor files (no build step required) -->
+  <script src="./vendor/react.development.js"></script>
+  <script src="./vendor/react-dom.development.js"></script>
+  <script src="./vendor/babel.min.js"></script>
 
   <title>M.P Cyber Treasury · E-Payment Status Report Generator</title>
 
-  <!-- Google Fonts: Syne (display) + DM Sans (body) -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&display=swap" rel="stylesheet" />
+  <!-- Fonts are handled by the local fallback stack in CSS. -->
 
   <style>
     /* ── Reset ─────────────────────────────────────────────────────── */
@@ -55,8 +52,8 @@
 
       --radius:        12px;
       --radius-sm:     8px;
-      --font-display:  'Syne', sans-serif;
-      --font-body:     'DM Sans', system-ui, sans-serif;
+      --font-display:  'Syne', 'Segoe UI', system-ui, sans-serif;
+      --font-body:     'DM Sans', 'Segoe UI', system-ui, sans-serif;
 
       /* Gradient button */
       --grad-btn:      linear-gradient(135deg, #4f65f0 0%, #7c3aed 100%);
@@ -116,6 +113,13 @@
       align-items: center;
       justify-content: center;
       font-size: 17px;
+      overflow: hidden;
+    }
+    .nav-logo img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
     }
     .nav-brand-text {
       display: flex;
@@ -211,6 +215,9 @@
       margin-bottom: 10px;
     }
     .hero-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
       font-family: var(--font-display);
       font-size: 2rem;
       font-weight: 800;
@@ -218,6 +225,12 @@
       line-height: 1.15;
       letter-spacing: -0.02em;
       margin-bottom: 4px;
+    }
+    .hero-logo {
+      width: 34px;
+      height: 34px;
+      object-fit: contain;
+      flex-shrink: 0;
     }
     .hero-title .accent { color: var(--accent); }
     .hero-subtitle {
@@ -1132,20 +1145,179 @@
       .about-grid { grid-template-columns: 1fr; }
       .team-grid { grid-template-columns: 1fr 1fr; }
     }
+
+    /* ── Loading Splash Screen ─────────────────────────────────────── */
+    #loading-splash {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: linear-gradient(135deg, #0b0d14 0%, #1a1a2e 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      color: #e8eaf6;
+      font-family: var(--font-body);
+    }
+
+    #loading-splash.hidden {
+      display: none;
+    }
+
+    .loading-content {
+      text-align: center;
+    }
+
+    .loading-spinner {
+      width: 48px;
+      height: 48px;
+      margin: 0 auto 24px;
+      border: 3px solid rgba(99,120,255,0.2);
+      border-top: 3px solid #6378ff;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+      font-size: 18px;
+      font-weight: 500;
+      color: #e8eaf6;
+      margin-bottom: 8px;
+    }
+
+    .loading-subtext {
+      font-size: 13px;
+      color: #5c6490;
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
+       LOADING OVERLAY (In-App Loader)
+    ══════════════════════════════════════════════════════════════════ */
+    .loading-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(11, 13, 20, 0.95);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+    }
+
+    .loading-overlay-content {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 32px;
+    }
+
+    .svg-frame {
+      position: relative;
+      width: 30px;
+      height: 30px;
+      transform-style: preserve-3d;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .svg-frame svg {
+      position: absolute;
+      transition: 0.1s;
+      z-index: calc(1 - (0.2 * var(--j)));
+      transform-origin: center;
+      width: 344px;
+      height: 344px;
+      fill: none;
+    }
+
+    .svg-frame:hover svg {
+      transform: rotate(-80deg) skew(30deg) translateX(calc(45px * var(--i)))
+        translateY(calc(-35px * var(--i)));
+    }
+
+    .svg-frame svg #center {
+      transition: 0.1s;
+      transform-origin: center;
+    }
+
+    .svg-frame:hover svg #center {
+      transform: rotate(-30deg) translateX(45px) translateY(-3px);
+    }
+
+    #out2 {
+      animation: rotate16 2s ease-in-out infinite alternate;
+      transform-origin: center;
+    }
+
+    #out3 {
+      animation: rotate16 2s ease-in-out infinite alternate;
+      transform-origin: center;
+      stroke: #ff0;
+    }
+
+    #inner3,
+    #inner1 {
+      animation: rotate16 1s ease-in-out infinite alternate;
+      transform-origin: center;
+    }
+
+    #center1 {
+      fill: #ff0;
+      animation: rotate16 1s ease-in-out infinite alternate;
+      transform-origin: center;
+    }
+
+    @keyframes rotate16 {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    .loading-message {
+      font-size: 14px;
+      color: var(--text-muted);
+      text-align: center;
+    }
   </style>
 </head>
 <body>
+  <!-- Loading splash screen shown while app initializes -->
+  <div id="loading-splash">
+    <div class="loading-content">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">MPCT-AP</div>
+      <div class="loading-subtext">Connecting to backend...</div>
+    </div>
+  </div>
+
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useCallback, useRef } = React;
+    const { useState, useEffect, useCallback, useRef } = React;
 
     /* ══════════════════════════════════════════════════════════════════
        CONSTANTS
     ══════════════════════════════════════════════════════════════════ */
-    const API_ENDPOINT = "/api/v1/extract";
+    const API_ENDPOINT = "http://127.0.0.1:8000/api/v1/extract";
+    const MAX_ALLOWED_YEAR = 2032;
 
     const MONTH_META = [
+      { name: "January",   label: "Jan", value: 1  },
+      { name: "February",  label: "Feb", value: 2  },
+      { name: "March",     label: "Mar", value: 3  },
       { name: "April",     label: "Apr", value: 4  },
       { name: "May",       label: "May", value: 5  },
       { name: "June",      label: "Jun", value: 6  },
@@ -1155,17 +1327,32 @@
       { name: "October",   label: "Oct", value: 10 },
       { name: "November",  label: "Nov", value: 11 },
       { name: "December",  label: "Dec", value: 12 },
-      { name: "January",   label: "Jan", value: 1  },
-      { name: "February",  label: "Feb", value: 2  },
-      { name: "March",     label: "Mar", value: 3  },
     ];
     const MONTH_BY_VALUE = Object.fromEntries(MONTH_META.map(m => [m.value, m]));
     const getMonthLabel  = (value) => (MONTH_BY_VALUE[value] && MONTH_BY_VALUE[value].label) || String(value);
 
-    // Fixed Context Time: June 2026
-    const SYSTEM_CURRENT_YEAR = 2026;
-    const SYSTEM_CURRENT_MONTH = 6;
-    const BASE_YEARS = Array.from({ length: 11 }, (_, i) => SYSTEM_CURRENT_YEAR - 5 + i);
+    function getCalendarState() {
+      const now = new Date();
+      const actualYear = now.getFullYear();
+      const actualMonth = now.getMonth() + 1;
+
+      return {
+        effectiveYear: Math.min(actualYear, MAX_ALLOWED_YEAR),
+        effectiveMonth: actualYear > MAX_ALLOWED_YEAR ? 12 : actualMonth,
+      };
+    }
+
+    function useCalendarState() {
+      const [calendar, setCalendar] = useState(() => getCalendarState());
+
+      useEffect(() => {
+        const refresh = () => setCalendar(getCalendarState());
+        const intervalId = window.setInterval(refresh, 60 * 1000);
+        return () => window.clearInterval(intervalId);
+      }, []);
+
+      return calendar;
+    }
 
     const STATUS = {
       IDLE:        "idle",
@@ -1204,7 +1391,7 @@
       return (
         <nav className="topnav">
           <div className="nav-brand">
-            <div className="nav-logo">🏛️</div>
+            <div className="nav-logo"><img src="/frontend/logo.png" alt="" aria-hidden="true" /></div>
             <div className="nav-brand-text">
               <span className="nav-brand-title">M.P Cyber Treasury</span>
               <span className="nav-brand-sub">E-Payment Status Report Generator</span>
@@ -1246,7 +1433,8 @@
         <div className="hero anim-fadeup">
           <div className="hero-text">
             <h1 className="hero-title">
-              M.P Cyber Treasury 🏛️
+              <img className="hero-logo" src="/frontend/logo.png" alt="" aria-hidden="true" />
+              M.P Cyber Treasury
             </h1>
             <p className="hero-subtitle">E-Payment Status Report Generator</p>
             <p className="hero-subtitle" style={{marginTop:"4px", fontSize:"12px", color:"var(--text-dim)"}}>
@@ -1310,8 +1498,8 @@
       isMultiYear, setIsMultiYear, singleYear, setSingleYear,
       fromYear, setFromYear, toYear, setToYear,
       months, toggleMonth, selectAllMonths, clearMonths,
-      resetSession, status, errorDetail, progressLogs, handleSubmit,
-      isMonthDisabled,
+      resetSession, handleStop, status, errorDetail, progressLogs, handleSubmit,
+      isMonthDisabled, currentYear, currentMonth, baseYears,
     }) {
       const isLoading = status === STATUS.LOADING;
       const isReady = ifsc.trim() && accountNumber.trim() && (isMultiYear || months.length > 0);
@@ -1387,7 +1575,7 @@
                         }}
                         disabled={isLoading}
                       >
-                        {BASE_YEARS.filter(y => y <= SYSTEM_CURRENT_YEAR).map(y => (
+                        {baseYears.filter(y => y <= currentYear).map(y => (
                           <option key={y} value={y}>{y}</option>
                         ))}
                       </select>
@@ -1420,7 +1608,7 @@
                         }}
                         disabled={isLoading}
                       >
-                        {BASE_YEARS.filter(y => y <= SYSTEM_CURRENT_YEAR).map(y => (
+                        {baseYears.filter(y => y <= currentYear).map(y => (
                           <option key={y} value={y}>{y}</option>
                         ))}
                       </select>
@@ -1434,7 +1622,7 @@
                         onChange={e => setToYear(Number(e.target.value))}
                         disabled={isLoading}
                       >
-                        {BASE_YEARS.filter(y => y >= fromYear && y <= SYSTEM_CURRENT_YEAR).map(y => (
+                        {baseYears.filter(y => y >= fromYear && y <= currentYear).map(y => (
                           <option key={y} value={y}>{y}</option>
                         ))}
                       </select>
@@ -1496,7 +1684,7 @@
                   })}
                 </div>
                 <p className="month-hint">
-                  {singleYear > SYSTEM_CURRENT_YEAR ?
+                  {singleYear > currentYear ?
                     "This year is in the future. Processing is blocked."
                     : months.length === 0 ?
                       "Select at least one month to proceed."
@@ -1574,7 +1762,7 @@
               <button
                 type="button"
                 className="btn-stop"
-                onClick={handleStop}
+                onClick={handleStop || (() => {})}
               >
                 ⏹ Stop
               </button>
@@ -1586,16 +1774,52 @@
 
 
     /* ══════════════════════════════════════════════════════════════════
+       LOADING SCREEN COMPONENT
+    ══════════════════════════════════════════════════════════════════ */
+    function LoadingScreen({ message = "Processing..." }) {
+      return (
+        <div className="loading-overlay">
+          <div className="loading-overlay-content">
+            <div className="svg-frame">
+              <svg style={{'--i': 1, '--j': 1}} viewBox="0 0 344 344">
+                <g id="center">
+                  <circle id="center1" cx="172" cy="172" r="20" />
+                </g>
+                <g id="inner">
+                  <circle id="inner1" cx="172" cy="172" r="50" stroke="#6378ff" strokeWidth="1" />
+                </g>
+                <g id="inner">
+                  <circle id="inner3" cx="172" cy="172" r="80" stroke="#6378ff" strokeWidth="1" />
+                </g>
+                <g id="outer">
+                  <circle id="out2" cx="172" cy="172" r="110" stroke="#6378ff" strokeWidth="1" />
+                </g>
+                <g id="outer">
+                  <circle id="out3" cx="172" cy="172" r="140" strokeWidth="1" />
+                </g>
+              </svg>
+            </div>
+            <div className="loading-message">{message}</div>
+          </div>
+        </div>
+      );
+    }
+
+    /* ══════════════════════════════════════════════════════════════════
        ROOT APP
     ══════════════════════════════════════════════════════════════════ */
     function App() {
+      const { effectiveYear: currentYear, effectiveMonth: currentMonth } = useCalendarState();
+      const baseYears = Array.from({ length: 11 }, (_, i) => currentYear - 5 + i);
+
       const [ifsc, setIfsc] = useState("");
       const [accountNumber, setAccountNumber] = useState("");
+      const [isLoading, setIsLoading] = useState(false);
 
       const [isMultiYear, setIsMultiYear] = useState(false);
-      const [singleYear, setSingleYear] = useState(SYSTEM_CURRENT_YEAR);
-      const [fromYear, setFromYear] = useState(SYSTEM_CURRENT_YEAR - 2);
-      const [toYear, setToYear] = useState(SYSTEM_CURRENT_YEAR - 1);
+      const [singleYear, setSingleYear] = useState(currentYear);
+      const [fromYear, setFromYear] = useState(currentYear - 2);
+      const [toYear, setToYear] = useState(currentYear - 1);
 
       const [months, setMonths] = useState([]);
       const [status, setStatus] = useState(STATUS.IDLE);
@@ -1604,10 +1828,10 @@
       const [abortController, setAbortController] = useState(null);
 
       const isMonthDisabled = useCallback((monthValue, targetYear) => {
-        if (targetYear > SYSTEM_CURRENT_YEAR) return true;
-        if (targetYear === SYSTEM_CURRENT_YEAR && monthValue > SYSTEM_CURRENT_MONTH) return true;
+        if (targetYear > currentYear) return true;
+        if (targetYear === currentYear && monthValue > currentMonth) return true;
         return false;
-      }, []);
+      }, [currentYear, currentMonth]);
 
       const toggleMonth = useCallback((n) => {
         if (isMonthDisabled(n, singleYear)) return;
@@ -1629,14 +1853,14 @@
         setIfsc("");
         setAccountNumber("");
         setIsMultiYear(false);
-        setSingleYear(SYSTEM_CURRENT_YEAR);
-        setFromYear(SYSTEM_CURRENT_YEAR - 2);
-        setToYear(SYSTEM_CURRENT_YEAR - 1);
+        setSingleYear(currentYear);
+        setFromYear(currentYear - 2);
+        setToYear(currentYear - 1);
         setMonths([]);
         setStatus(STATUS.IDLE);
         setErrorDetail("");
         setProgressLogs({});
-      }, [abortController]);
+      }, [abortController, currentYear]);
 
       const handleStop = useCallback(() => {
         if (abortController) {
@@ -1787,6 +2011,10 @@
         }
       }, [ifsc, accountNumber, isMultiYear, singleYear, fromYear, toYear, months, isMonthDisabled]);
 
+      if (isLoading) {
+        return <LoadingScreen message="Processing your request..." />;
+      }
+
       return (
         <>
           <Header />
@@ -1813,11 +2041,15 @@
                   selectAllMonths={selectAllMonths}
                   clearMonths={clearMonths}
                   resetSession={resetSession}
+                  handleStop={handleStop}
                   status={status}
                   errorDetail={errorDetail}
                   progressLogs={progressLogs}
                   handleSubmit={handleSubmit}
                   isMonthDisabled={isMonthDisabled}
+                  currentYear={currentYear}
+                  currentMonth={currentMonth}
+                  baseYears={baseYears}
                 />
                 <Sidebar />
               </div>
@@ -1832,9 +2064,24 @@
     }
 
     try {
-      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+      // Create the root and render the App
+      const rootElement = document.getElementById("root");
+      ReactDOM.createRoot(rootElement).render(<App />);
+      
+      // Hide the loading splash once React has mounted
+      const splash = document.getElementById("loading-splash");
+      if (splash) {
+        setTimeout(() => {
+          splash.classList.add("hidden");
+        }, 100);  // Small delay to ensure React renders first
+      }
     } catch (renderError) {
       const root = document.getElementById("root");
+      // Hide splash on error too
+      const splash = document.getElementById("loading-splash");
+      if (splash) {
+        splash.classList.add("hidden");
+      }
       if (root) {
         root.innerHTML = `<div style="padding:24px;color:#f8f8f8;background:#111;min-height:100vh;font-family:sans-serif;
           display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;">
